@@ -325,15 +325,64 @@ function InspectorModal({ inspectors, current, onSelect, onAdd, newName, setNewN
 
 function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleXray }) {
   const [filter, setFilter] = useState('all');
+  const [cargoFilter, setCargoFilter] = useState('all'); // 화물 종류 필터
+  const [search, setSearch] = useState('');
+  
   const total = list.length;
   const completedCount = list.filter(c => completedMap[c.cn]).length;
   const damagedCount = list.filter(c => completedMap[c.cn]?.damaged).length;
   const remaining = total - completedCount;
+  
+  // 화물 종류별 카운트
+  const cargoCounts = useMemo(() => {
+    const counts = { dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, hc: 0, dc20: 0, dc40: 0 };
+    for (const c of list) {
+      if (c.dg) counts.dg++;
+      if (c.rf) counts.rf++;
+      if (c.tk) counts.tk++;
+      if (c.oog) counts.oog++;
+      if (c.fe === 'F') counts.full++;
+      else counts.empty++;
+      const lbl = isoToLabel(c.iso);
+      if (lbl === '40HC') counts.hc++;
+      else if (lbl === '20DC' || lbl === '20GP') counts.dc20++;
+      else if (lbl === '40DC' || lbl === '40GP') counts.dc40++;
+    }
+    return counts;
+  }, [list]);
+  
   const filtered = list.filter(c => {
+    // 완료 상태 필터
     const info = completedMap[c.cn];
-    if (filter === 'completed') return !!info;
-    if (filter === 'remaining') return !info;
-    if (filter === 'damaged') return info?.damaged;
+    if (filter === 'completed' && !info) return false;
+    if (filter === 'remaining' && info) return false;
+    if (filter === 'damaged' && !info?.damaged) return false;
+    
+    // 화물 종류 필터
+    if (cargoFilter === 'dg' && !c.dg) return false;
+    if (cargoFilter === 'rf' && !c.rf) return false;
+    if (cargoFilter === 'tk' && !c.tk) return false;
+    if (cargoFilter === 'oog' && !c.oog) return false;
+    if (cargoFilter === 'full' && c.fe !== 'F') return false;
+    if (cargoFilter === 'empty' && c.fe !== 'E') return false;
+    if (cargoFilter === 'hc' && isoToLabel(c.iso) !== '40HC') return false;
+    if (cargoFilter === '20' && !['20DC', '20GP'].includes(isoToLabel(c.iso))) return false;
+    if (cargoFilter === '40' && !['40DC', '40GP'].includes(isoToLabel(c.iso))) return false;
+    if (cargoFilter === 'xray' && !xrayList[c.cn]) return false;
+    
+    // 검색
+    if (search.length >= 2) {
+      const q = search.toUpperCase().replace(/\s+/g, '');
+      const isFour = /^\d{4}$/.test(q);
+      const cn = (c.cn || '').toUpperCase();
+      const sl = (c.sl || '').toUpperCase();
+      if (isFour) {
+        if (!cn.endsWith(q)) return false;
+      } else {
+        if (!cn.includes(q) && !sl.includes(q)) return false;
+      }
+    }
+    
     return true;
   });
   
@@ -345,39 +394,91 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     </div>;
   }
   
-  return <div className="space-y-3">
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center gap-2">
-      <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded text-xs font-bold ${filter === 'all' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300'}`}>총 {total}대</button>
-      <button onClick={() => setFilter('completed')} className={`px-3 py-1.5 rounded text-xs font-bold ${filter === 'completed' ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-emerald-300'}`}>✓ 완료 {completedCount}</button>
-      <button onClick={() => setFilter('remaining')} className={`px-3 py-1.5 rounded text-xs font-bold ${filter === 'remaining' ? 'bg-blue-500 text-slate-900' : 'bg-slate-800 text-blue-300'}`}>잔여 {remaining}</button>
-      {damagedCount > 0 && <button onClick={() => setFilter('damaged')} className={`px-3 py-1.5 rounded text-xs font-bold ${filter === 'damaged' ? 'bg-orange-500 text-slate-900' : 'bg-slate-800 text-orange-300'}`}>⚠ 데미지 {damagedCount}</button>}
-      <div className="ml-auto text-xs text-amber-300 font-bold">{total > 0 ? Math.round((completedCount / total) * 100) : 0}%</div>
+  return <div className="space-y-2">
+    {/* 검색창 (양하리스트 안에 통합) */}
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-2">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"/>
+        <input type="text" value={search} 
+          onChange={e => setSearch(e.target.value)}
+          placeholder="끝 4자리 또는 컨번호/실번호"
+          className="w-full pl-9 pr-9 py-2 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
+        {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded hover:bg-slate-700 flex items-center justify-center">
+          <X className="w-4 h-4"/>
+        </button>}
+      </div>
     </div>
+    
+    {/* 완료 상태 필터 */}
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-wrap items-center gap-1.5">
+      <button onClick={() => setFilter('all')} className={`px-2.5 py-1 rounded text-[11px] font-bold ${filter === 'all' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300'}`}>전체 {total}</button>
+      <button onClick={() => setFilter('completed')} className={`px-2.5 py-1 rounded text-[11px] font-bold ${filter === 'completed' ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-emerald-300'}`}>✓ 완료 {completedCount}</button>
+      <button onClick={() => setFilter('remaining')} className={`px-2.5 py-1 rounded text-[11px] font-bold ${filter === 'remaining' ? 'bg-blue-500 text-slate-900' : 'bg-slate-800 text-blue-300'}`}>잔여 {remaining}</button>
+      {damagedCount > 0 && <button onClick={() => setFilter('damaged')} className={`px-2.5 py-1 rounded text-[11px] font-bold ${filter === 'damaged' ? 'bg-orange-500 text-slate-900' : 'bg-slate-800 text-orange-300'}`}>⚠ 데미지 {damagedCount}</button>}
+      <div className="ml-auto text-[11px] text-amber-300 font-bold">{total > 0 ? Math.round((completedCount / total) * 100) : 0}%</div>
+    </div>
+    
+    {/* 화물 종류별 필터 */}
+    <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-wrap gap-1">
+      <button onClick={() => setCargoFilter('all')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'all' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400'}`}>모두</button>
+      <button onClick={() => setCargoFilter('full')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'full' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-emerald-300'}`}>F {cargoCounts.full}</button>
+      <button onClick={() => setCargoFilter('empty')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'empty' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400'}`}>E {cargoCounts.empty}</button>
+      <button onClick={() => setCargoFilter('20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === '20' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>20DC {cargoCounts.dc20}</button>
+      <button onClick={() => setCargoFilter('40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === '40' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>40DC {cargoCounts.dc40}</button>
+      <button onClick={() => setCargoFilter('hc')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'hc' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>40HC {cargoCounts.hc}</button>
+      {cargoCounts.rf > 0 && <button onClick={() => setCargoFilter('rf')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'rf' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-cyan-300'}`}>❄ RF {cargoCounts.rf}</button>}
+      {cargoCounts.dg > 0 && <button onClick={() => setCargoFilter('dg')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'dg' ? 'bg-red-600 text-white' : 'bg-slate-800 text-red-300'}`}>🔥 DG {cargoCounts.dg}</button>}
+      {cargoCounts.tk > 0 && <button onClick={() => setCargoFilter('tk')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ TK {cargoCounts.tk}</button>}
+      {cargoCounts.oog > 0 && <button onClick={() => setCargoFilter('oog')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'oog' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-purple-300'}`}>📐 OOG {cargoCounts.oog}</button>}
+      <button onClick={() => setCargoFilter('xray')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'xray' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-amber-300'}`}>📡 X-RAY</button>
+    </div>
+    
+    <div className="text-[10px] text-slate-500 px-1">
+      {filtered.length}대 {(cargoFilter !== 'all' || filter !== 'all' || search) && '(필터 적용)'}
+    </div>
+    
     <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden divide-y divide-slate-800">
       {filtered.map((c, i) => {
-        const info = completedMap[c.cn]; const isComp = !!info; const isDmg = info?.damaged;
+        const info = completedMap[c.cn];
+        const isComp = !!info;
+        const isDmg = info?.damaged;
+        // 화물 종류별 좌측 색깔 띠
+        let typeBar = 'bg-slate-700';
+        if (c.dg) typeBar = 'bg-red-500';
+        else if (c.rf) typeBar = 'bg-cyan-500';
+        else if (c.tk) typeBar = 'bg-orange-500';
+        else if (c.oog) typeBar = 'bg-purple-500';
+        else if (c.fe === 'F') typeBar = 'bg-emerald-500';
+        else typeBar = 'bg-slate-500';
+        
         return <div key={c.cn + i} onClick={() => setSelectedCn(c.cn)}
-          className={`px-3 py-2.5 flex items-center gap-2.5 cursor-pointer ${isDmg ? 'bg-orange-950/40' : isComp ? 'bg-emerald-950/30 opacity-60' : ''}`}>
-          <div className="flex-1 min-w-0">
+          className={`flex items-stretch cursor-pointer ${isDmg ? 'bg-orange-950/40' : isComp ? 'bg-emerald-950/30 opacity-60' : ''}`}>
+          {/* 좌측 색깔 띠 (화물 종류) */}
+          <div className={`w-1.5 ${typeBar}`}/>
+          
+          <div className="flex-1 px-3 py-2.5 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               {isDmg && <span className="text-orange-300">⚠</span>}
               {isComp && !isDmg && <span className="text-emerald-400">✓</span>}
               <span className="mono font-black text-sm text-blue-200">{c.cn}</span>
               <span className={`text-[9px] mono px-1 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe || 'F'}</span>
-              {c.dg && <span className="text-red-400 text-xs">🔥</span>}
-              {c.rf && <span className="text-cyan-400 text-xs">❄</span>}
-              {c.tk && <span className="text-orange-400 text-xs">⬛</span>}
+              <span className="text-[9px] mono px-1 py-0.5 rounded font-bold bg-blue-900 text-blue-300">{isoToLabel(c.iso)}</span>
+              {c.dg && <span className="text-[9px] bg-red-700 text-white px-1 py-0.5 rounded font-bold">🔥 DG</span>}
+              {c.rf && <span className="text-[9px] bg-cyan-700 text-white px-1 py-0.5 rounded font-bold">❄ RF{c.tmp ? ` ${c.tmp}°` : ''}</span>}
+              {c.tk && <span className="text-[9px] bg-orange-700 text-white px-1 py-0.5 rounded font-bold">⬛ TK</span>}
+              {c.oog && <span className="text-[9px] bg-purple-700 text-white px-1 py-0.5 rounded font-bold">📐 OOG</span>}
+              {xrayList[c.cn] && <span className="text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold">📡 X-RAY</span>}
             </div>
             {c.sl && <div className="text-[10px] mono text-amber-200 mt-0.5">실 {c.sl}</div>}
             <div className="flex items-center gap-2 mt-1 text-[10px] mono flex-wrap text-slate-400">
               {c.bay && <span className="text-amber-200 font-bold">{fmtPos(c)}</span>}
-              {c.iso && <span>{isoToLabel(c.iso)}</span>}
               {c.wt > 0 && <span>{formatWt(c.wt)}</span>}
+              {c.pol && <span>POL {c.pol}</span>}
               {isComp && info?.by && <span className="text-emerald-300">[{info.by}]</span>}
             </div>
           </div>
           <button onClick={(e) => { e.stopPropagation(); toggleXray(c.cn); }}
-            className={`w-9 h-9 rounded text-sm font-bold mono flex-shrink-0 ${xrayList[c.cn] ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-500'}`}>
+            className={`w-9 self-center mr-2 h-9 rounded text-xs font-bold mono flex-shrink-0 ${xrayList[c.cn] ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-500'}`}>
             {xrayList[c.cn] ? '✓' : 'X'}
           </button>
         </div>;
@@ -1069,6 +1170,103 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   );
 }
 
+// === 음성 헬퍼 (30일 버전 - 검증됨) ===
+const KOR_DIGITS = [
+  ['영','0'],['공','0'],['일','1'],['이','2'],['삼','3'],['사','4'],
+  ['오','5'],['육','6'],['칠','7'],['팔','8'],['구','9'],
+  ['하나','1'],['둘','2'],['셋','3'],['넷','4'],['다섯','5'],
+  ['여섯','6'],['일곱','7'],['여덟','8'],['아홉','9'],['열','']
+];
+
+const parseSpokenDigits = (text) => {
+  if (!text) return '';
+  let s = text.toLowerCase();
+  const ENG = [['zero','0'],['oh','0'],['one','1'],['two','2'],['three','3'],
+               ['four','4'],['five','5'],['six','6'],['seven','7'],['eight','8'],['nine','9']];
+  for (const [k, v] of ENG) s = s.split(k).join(v);
+  s = s.replace(/\s+/g, '');
+  // 긴 한글부터 매칭 (일곱의 일 방지)
+  const sorted = [...KOR_DIGITS].sort((a,b) => b[0].length - a[0].length);
+  for (const [k, v] of sorted) {
+    s = s.split(k).join(v);
+  }
+  const matches = s.match(/\d+/g);
+  if (!matches) return '';
+  const allDigits = matches.join('');
+  // 4자리 이상이면 끝 4자리만 (검색용)
+  if (allDigits.length >= 4) return allDigits.slice(-4);
+  return allDigits;
+};
+
+const NUM_KOR = ['공','일','이','삼','사','오','육','칠','팔','구'];
+const charToKorean = (ch) => {
+  if (/^[0-9]$/.test(ch)) return NUM_KOR[parseInt(ch, 10)];
+  return ch;
+};
+
+const numberToSinoKorean = (n) => {
+  if (n < 0 || n >= 100) return String(n);
+  if (n === 0) return '영';
+  if (n < 10) return NUM_KOR[n];
+  const tens = Math.floor(n / 10);
+  const ones = n % 10;
+  let result = '';
+  if (tens === 1) result = '십';
+  else result = NUM_KOR[tens] + '십';
+  if (ones > 0) result += NUM_KOR[ones];
+  return result;
+};
+
+const tierIsAbove = (tier) => tier && tier.length === 2 && tier[0] === '8';
+
+const speakContainer = (c, xrayOn) => {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  
+  // 한 글자씩 마침표로 끊어 읽기
+  const spellOut = (s) => {
+    if (!s) return '';
+    return s.split('').map(charToKorean).join('. ');
+  };
+  
+  const cnSpoken = spellOut(c.cn);
+  const sealSpoken = (c.sl && c.sl.trim()) ? spellOut(c.sl.trim()) : null;
+  
+  let sealText = '';
+  if (c.fe === 'F') {
+    sealText = sealSpoken ? `, 실번호. ${sealSpoken}` : ', 실번호 없음';
+  } else {
+    sealText = ', 엠티';
+  }
+  
+  const xrayWarn = xrayOn ? '. 엑스레이 대상입니다. 실 달아주세요.' : '';
+  
+  let posText = '';
+  if (c.bay) {
+    const bay = parseInt(c.bay, 10) || 0;
+    const row = parseInt(c.row, 10) || 0;
+    const deck = tierIsAbove(c.tier) ? '갑판상' : '선창내';
+    posText = `, ${bay}베이 ${row}열 ${c.tier}단 ${deck}`;
+  }
+  
+  const text = `양하 컨테이너. ${cnSpoken}${sealText}${posText}${xrayWarn}`;
+  
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ko-KR';
+  u.rate = 0.95;
+  window.speechSynthesis.speak(u);
+};
+
+const speakText = (text) => {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ko-KR';
+  u.rate = 1.05;
+  window.speechSynthesis.speak(u);
+};
+
+// === SearchTab — 30일 버전 음성 + 4자리 버그 수정 ===
 function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn, vsl }) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -1110,12 +1308,40 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
         speakText('마이크 권한이 필요합니다.');
       }
     };
-    
     recognitionRef.current = r;
-    return () => {
-      try { r.stop(); } catch(_) {}
-    };
+    return () => { try { r.abort(); } catch(_) {} };
   }, []);
+
+  // 검색 결과 자동 음성 안내 (30일 버전)
+  useEffect(() => {
+    if (!autoSpeak) return;
+    if (!query || query.length < 2) return;
+    const sig = `${query}-${results.length}-${results[0]?.cn || 'none'}`;
+    if (lastSpokenRef.current === sig) return;
+    lastSpokenRef.current = sig;
+
+    if (results.length === 0) {
+      const queryDigits = query.replace(/\D/g, '');
+      if (queryDigits.length >= 2) {
+        const spokenQuery = queryDigits.split('').map(charToKorean).join('. ');
+        speakText(`${spokenQuery}, 일치하는 컨테이너가 없습니다. 다시 말씀해 주세요.`);
+      } else {
+        speakText('일치하는 컨테이너가 없습니다. 다시 말씀해 주세요.');
+      }
+      return;
+    }
+
+    if (results.length === 1) {
+      speakContainer(results[0], !!xrayList[results[0].cn]);
+    } else if (results.length > 1 && results.length <= 5) {
+      const countKor = numberToSinoKorean(results.length);
+      const cnSpoken = results[0].cn.split('').map(charToKorean).join('. ');
+      speakText(`${countKor} 개의 컨테이너가 일치합니다. 첫 번째 결과. ${cnSpoken}`);
+    } else if (results.length > 5) {
+      const countKor = numberToSinoKorean(results.length);
+      speakText(`${countKor} 개의 컨테이너가 일치합니다. 더 자세한 번호를 말씀해주세요.`);
+    }
+  }, [results, query, autoSpeak, xrayList]);
 
   const startListening = () => {
     if (!recognitionRef.current) return;
@@ -1136,17 +1362,6 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
     setIsListening(false);
   };
 
-  // 검색 결과 1개 → 자동 음성 안내
-  useEffect(() => {
-    if (!autoSpeak) return;
-    if (results.length === 1 && results[0].cn !== lastSpokenRef.current) {
-      lastSpokenRef.current = results[0].cn;
-      const c = results[0];
-      const xrayOn = !!xrayList[c.cn];
-      speakContainer(c, xrayOn);
-    }
-  }, [results, autoSpeak, xrayList]);
-
   return (
     <div className="space-y-3">
       {/* 선박 추적 */}
@@ -1155,9 +1370,10 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"/>
-          <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+          <input type="text" value={query} 
+            onChange={e => setQuery(e.target.value)}
             placeholder="컨테이너 / 끝 4자리 / 실 / B/L"
-            className="w-full pl-9 pr-20 py-2.5 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
+            className="w-full pl-9 pr-24 py-2.5 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
           <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
             {voiceSupported && (
               <button onClick={isListening ? stopListening : startListening}
@@ -1186,24 +1402,25 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
           </div>
         )}
         <div className="text-[10px] text-slate-500 mt-1.5">
-          {query.length < 2 ? '2자 이상. 4자리 = 끝자리 매칭. 마이크로 음성 검색 가능' : `${results.length}개 결과`}
+          {query.length < 2 ? '🎤 마이크 누르고 "공구일오" 식으로 또박또박. 4자리 = 끝자리 매칭' : `${results.length}개 결과`}
         </div>
       </div>
       
       <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden divide-y divide-slate-800">
         {results.map((c, i) => {
-          const isPtk = dischargeCns.has(c.cn);
+          // dischargeCns 안전 체크 (4자리 입력 시 튕김 방지)
+          const isPtk = dischargeCns && typeof dischargeCns.has === 'function' && dischargeCns.has(c.cn);
           return (
-            <div key={c.cn + i} onClick={() => setSelectedCn(c.cn)}
+            <div key={(c.cn || '_') + i} onClick={() => setSelectedCn(c.cn)}
               className={`px-3 py-2.5 cursor-pointer hover:bg-slate-800/50 ${isPtk ? 'bg-red-950/20' : ''}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 {isPtk && <span className="text-red-300 text-xs font-bold">[양하]</span>}
-                <span className="mono font-black text-sm">{c.cn}</span>
-                <span className={`text-[10px] mono px-1.5 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe}</span>
+                <span className="mono font-black text-sm">{c.cn || ''}</span>
+                <span className={`text-[10px] mono px-1.5 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe || 'F'}</span>
                 {c.dg && <span className="text-red-400">🔥</span>}
                 {c.rf && <span className="text-cyan-400">❄</span>}
                 {c.tk && <span className="text-orange-400">⬛</span>}
-                {xrayList[c.cn] && <span className="bg-amber-500 text-slate-900 text-[9px] px-1 rounded font-bold">X-RAY</span>}
+                {xrayList && xrayList[c.cn] && <span className="bg-amber-500 text-slate-900 text-[9px] px-1 rounded font-bold">X-RAY</span>}
               </div>
               <div className="text-[11px] text-slate-400 mono mt-0.5">
                 {c.bay && `${fmtPos(c)} · `}{isoToLabel(c.iso)}
@@ -1220,7 +1437,6 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
   );
 }
 
-// === VesselTracker — 선박 위치 추적 사이트 바로가기 ===
 function VesselTracker({ vsl }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
