@@ -388,16 +388,29 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
 
 function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, completedMap }) {
   const [pageIdx, setPageIdx] = useState(0);
+  const [zoom, setZoom] = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) return 0.6;
+    return 1.0;
+  });
   const scrollRef = useRef(null);
-  const completed = completedMap;
+  const containerRef = useRef(null);
   
-  // 마우스 드래그 스크롤
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  
+  // 평택 양하 대상 = POD 가 PTK 또는 KRPTK 로 끝나는 컨
+  const isPtk = (c) => {
+    const pod = (c.pod || '').toUpperCase();
+    return pod === 'PTK' || pod === 'KRPTK' || pod.endsWith('PTK');
+  };
+  
+  // 마우스/터치 드래그 + 휠 + 핀치 줌
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     let isDown = false, startX = 0, startY = 0, scrollLeft = 0, scrollTop = 0;
+    let pinchStartDist = 0, pinchStartZoom = 1;
+    
     const onMouseDown = (e) => {
-      // 셀 클릭 (button) 은 무시
       if (e.target.closest('button')) return;
       isDown = true;
       startX = e.pageX - el.offsetLeft;
@@ -406,24 +419,38 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
       scrollTop = el.scrollTop;
       el.style.cursor = 'grabbing';
     };
-    const onMouseUp = () => {
-      isDown = false;
-      el.style.cursor = 'grab';
-    };
+    const onMouseUp = () => { isDown = false; el.style.cursor = 'grab'; };
     const onMouseMove = (e) => {
       if (!isDown) return;
       e.preventDefault();
-      const x = e.pageX - el.offsetLeft;
-      const y = e.pageY - el.offsetTop;
-      el.scrollLeft = scrollLeft - (x - startX);
-      el.scrollTop = scrollTop - (y - startY);
+      el.scrollLeft = scrollLeft - ((e.pageX - el.offsetLeft) - startX);
+      el.scrollTop = scrollTop - ((e.pageY - el.offsetTop) - startY);
     };
-    // 마우스 휠 좌우 스크롤 (shift 안 눌러도 가능)
     const onWheel = (e) => {
-      // 가로 우선 — deltaY 가 크면 좌우로 변환
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      // Ctrl + 휠 = 줌
+      if (e.ctrlKey) {
+        e.preventDefault();
+        setZoom(z => Math.max(0.3, Math.min(3, z - e.deltaY * 0.001)));
+      } else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         el.scrollLeft += e.deltaY;
         e.preventDefault();
+      }
+    };
+    
+    // 터치 핀치 줌
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        pinchStartDist = dist(e.touches);
+        pinchStartZoom = zoom;
+      }
+    };
+    const onTouchMove = (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const newDist = dist(e.touches);
+        const ratio = newDist / pinchStartDist;
+        setZoom(Math.max(0.3, Math.min(3, pinchStartZoom * ratio)));
       }
     };
     
@@ -432,36 +459,35 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('mousemove', onMouseMove);
     el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
     
     return () => {
       el.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('mousemove', onMouseMove);
       el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
     };
-  }, [pageIdx]);
+  }, [zoom]);
   
-  // 시프팅 감지
+  // 시프팅 분석
   const shiftingMap = useMemo(() => {
     const result = { needsShift: {}, shiftCns: {} };
     if (!dischargeCns || dischargeCns.size === 0) return result;
-    
     const tierZone = (t) => parseInt(t) >= 80 ? 'deck' : 'hold';
-    
     for (const c of ediContainers) {
       if (!dischargeCns.has(c.cn)) continue;
       if (!c.bay || !c.tier) continue;
       const zone = tierZone(c.tier);
       const tier = parseInt(c.tier);
-      
-      const above = ediContainers.filter(o => 
-        o.cn !== c.cn &&
-        !dischargeCns.has(o.cn) && // 양하 아닌 것
+      const above = ediContainers.filter(o =>
+        o.cn !== c.cn && !dischargeCns.has(o.cn) &&
         o.bay === c.bay && o.row === c.row &&
         o.tier && tierZone(o.tier) === zone &&
         parseInt(o.tier) > tier
       );
-      
       if (above.length > 0) {
         result.needsShift[c.cn] = above.length;
         for (const a of above) result.shiftCns[a.cn] = true;
@@ -481,7 +507,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     return g;
   }, [ediContainers]);
   
-  // 페어드 페이지 (홀수+짝수)
+  // 페이지 = 짝수/홀수 베이 한 쌍 (PDF 처럼)
   const pages = useMemo(() => {
     const bays = Object.keys(bayGroups).sort();
     const out = [];
@@ -489,17 +515,22 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     for (const b of bays) {
       if (used.has(b)) continue;
       const num = parseInt(b);
-      if (num % 2 === 1) {
-        const next = String(num + 1).padStart(3, '0');
-        if (bays.includes(next)) {
-          out.push({ title: `${b}/${next}`, bays: [b, next] });
-          used.add(b); used.add(next);
-        } else {
-          out.push({ title: b, bays: [b] });
-          used.add(b);
-        }
+      if (num % 2 === 0) {
+        const odd = String(num + 1).padStart(b.length, '0');
+        const hasOdd = bays.includes(odd);
+        out.push({
+          title: hasOdd ? `BAY(${b}) ${odd}` : `BAY ${b}`,
+          evenBay: b,
+          oddBay: hasOdd ? odd : null,
+        });
+        used.add(b);
+        if (hasOdd) used.add(odd);
       } else {
-        out.push({ title: b, bays: [b] });
+        out.push({
+          title: `BAY ${b}`,
+          evenBay: null,
+          oddBay: b,
+        });
         used.add(b);
       }
     }
@@ -510,7 +541,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-12 text-center text-slate-500">
         <MapPin className="w-12 h-12 mx-auto mb-3 opacity-30"/>
-        베이 데이터가 없습니다
+        베이 데이터 없음
       </div>
     );
   }
@@ -518,203 +549,415 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
   const safeIdx = Math.min(pageIdx, pages.length - 1);
   const currentPage = pages[safeIdx];
   
-  // 셀 색깔
+  // 현재 페이지 컨테이너들
+  const pageContainers = [
+    ...(currentPage.evenBay ? bayGroups[currentPage.evenBay] || [] : []),
+    ...(currentPage.oddBay ? bayGroups[currentPage.oddBay] || [] : []),
+  ];
+  
+  // ROW/TIER 자동 추출 (ASC 정보로 베이 모양 파악)
+  // ROW 순서: 좌현 짝수 큰→작은, 가운데 00, 01, 우현 홀수 작은→큰
+  const sortRows = (rows) => {
+    const arr = Array.from(new Set(rows));
+    return arr.sort((a, b) => {
+      const na = parseInt(a), nb = parseInt(b);
+      // 좌현(짝수, 0 제외): 큰 번호가 왼쪽
+      // 우현(홀수): 작은 번호가 가운데, 큰 번호가 오른쪽
+      // 00, 01 은 가운데
+      if (na === 0 && nb !== 0) return -0.5;
+      if (nb === 0 && na !== 0) return 0.5;
+      const aEven = na % 2 === 0, bEven = nb % 2 === 0;
+      if (aEven && !bEven) return -1; // 좌현 먼저
+      if (!aEven && bEven) return 1;
+      if (aEven && bEven) return nb - na; // 좌현: 큰 번호 왼쪽
+      return na - nb; // 우현: 작은 번호 왼쪽
+    });
+  };
+  
+  // DECK / HOLD 분리
+  const deckContainers = pageContainers.filter(c => parseInt(c.tier) >= 80);
+  const holdContainers = pageContainers.filter(c => parseInt(c.tier) < 80);
+  
+  const deckRows = sortRows(deckContainers.map(c => c.row));
+  const deckTiers = Array.from(new Set(deckContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  const holdRows = sortRows(holdContainers.map(c => c.row));
+  const holdTiers = Array.from(new Set(holdContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  
+  // 셀 찾기
+  const getCell = (row, tier) => {
+    return pageContainers.find(c => c.row === row && c.tier === tier);
+  };
+  
+  // 셀 색깔 (파스텔)
   const cellColor = (c) => {
-    // 완료된 거 — 흐리게
-    if (completed[c.cn]) {
-      return completed[c.cn].damaged
-        ? 'bg-orange-900/40 text-orange-200 border-orange-700/60 opacity-50'
-        : 'bg-emerald-900/40 text-emerald-200 border-emerald-700/60 opacity-50';
+    if (completedMap[c.cn]) {
+      // 완료 = 흰색
+      return 'bg-white text-slate-700 border-slate-300';
     }
-    // X-RAY — 노랑
     if (xrayList[c.cn]) {
-      return 'bg-amber-500 text-slate-900 border-amber-300 ring-2 ring-amber-300';
+      // X-RAY = 파스텔 보라
+      return 'bg-purple-200 text-purple-900 border-purple-400 ring-1 ring-purple-300';
     }
-    // 시프팅 대상 — 황색
     if (shiftingMap.shiftCns[c.cn]) {
-      return 'bg-amber-600 text-amber-50 border-amber-400 ring-1 ring-amber-300';
+      // 시프팅 대상 (위에 있는 컨) = 파스텔 주황
+      return 'bg-orange-200 text-orange-900 border-orange-400';
     }
-    // 평택 양하 — 빨강
-    if (dischargeCns.has(c.cn)) {
-      return 'bg-red-600 text-red-50 border-red-300 ring-1 ring-red-300';
+    if (isPtk(c) || dischargeCns.has(c.cn)) {
+      // 평택 양하 = 파스텔 노랑 (형광펜 같이)
+      return 'bg-yellow-200 text-yellow-900 border-yellow-500 ring-1 ring-yellow-400';
     }
-    // 특수
-    if (c.dg) return 'bg-red-900/40 text-red-300 border-red-800/50';
-    if (c.rf) return 'bg-cyan-900/40 text-cyan-300 border-cyan-800/50';
-    if (c.tk) return 'bg-orange-900/40 text-orange-300 border-orange-800/50';
-    // 통과 — 회색
-    return 'bg-slate-700/60 text-slate-400 border-slate-600/50';
+    // 통과 화물 = 옅은 회색
+    return 'bg-slate-100 text-slate-500 border-slate-300';
   };
   
-  // 통계
-  const ptkCount = ediContainers.filter(c => dischargeCns.has(c.cn)).length;
-  const shiftCount = Object.keys(shiftingMap.needsShift).length;
-  const shiftTargetCount = Object.keys(shiftingMap.shiftCns).length;
+  // 셀 너비/높이 (zoom 적용)
+  const baseW = isMobile ? 78 : 110;
+  const baseH = isMobile ? 56 : 72;
+  const cellW = Math.round(baseW * zoom);
+  const cellH = Math.round(baseH * zoom);
+  const fontSize = Math.max(7, Math.round(9 * zoom));
   
-  // BAY 선택 (우측 목록)
-  const allBays = Object.keys(bayGroups).sort();
-  
-  // 현재 페이지의 컨테이너
-  const containers = currentPage.bays.flatMap(b => bayGroups[b] || []);
-  
-  // ROW/TIER 그리드
-  const rows = useMemo(() => {
-    const rs = new Set(containers.map(c => c.row));
-    return Array.from(rs).sort();
-  }, [containers]);
-  const deckTiers = useMemo(() => {
-    const ts = new Set(containers.filter(c => parseInt(c.tier) >= 80).map(c => c.tier));
-    return Array.from(ts).sort((a, b) => parseInt(b) - parseInt(a));
-  }, [containers]);
-  const holdTiers = useMemo(() => {
-    const ts = new Set(containers.filter(c => parseInt(c.tier) < 80).map(c => c.tier));
-    return Array.from(ts).sort((a, b) => parseInt(b) - parseInt(a));
-  }, [containers]);
-  
-  const getCell = (bay, row, tier) => {
-    return containers.find(c => c.bay === bay && c.row === row && c.tier === tier);
-  };
-  
-  const renderCell = (bay, row, tier) => {
-    const c = getCell(bay, row, tier);
+  // 한 셀 렌더링 (4줄 PDF 형식)
+  const renderCell = (row, tier) => {
+    const c = getCell(row, tier);
+    const key = `${row}-${tier}`;
+    
     if (!c) {
-      return <div key={`${bay}-${row}-${tier}`} className="w-[44px] sm:w-[64px] lg:w-[88px] h-12 sm:h-14 border border-dashed border-slate-800 rounded flex-shrink-0"/>;
+      // 컨 없음 → 빈 칸 또는 X (40피트가 차지한 자리는 별도 처리 어려우니 빈칸)
+      return (
+        <div key={key} 
+          className="border border-dashed border-slate-700/50 flex-shrink-0"
+          style={{ width: cellW, height: cellH }}
+        />
+      );
     }
+    
     const sm = shiftingMap;
     const needsShift = sm.needsShift[c.cn];
-    const isShiftTarget = sm.shiftCns[c.cn];
+    const ptk = isPtk(c);
+    const fe = c.fe || 'F';
+    const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '';
+    const typeLabel = isoToLabel(c.iso);
+    const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3);
+    const podLabel = (c.pod || '').replace(/^KR/, '').slice(0, 3);
+    const transit = c.tr ? c.tr.slice(0, 3) : '';
     
     return (
-      <button key={`${bay}-${row}-${tier}`} onClick={() => setSelectedCn(c.cn)}
-        className={`relative border-2 rounded mono text-[8.5px] sm:text-[10px] font-bold px-0.5 py-1 w-[44px] sm:w-[64px] lg:w-[88px] h-12 sm:h-14 flex-shrink-0 hover:brightness-125 active:scale-95 transition flex flex-col justify-center items-center ${cellColor(c)}`}
-        title={`${c.cn} | BAY ${c.bay} ROW ${c.row} TIER ${c.tier} | ${c.tp || c.iso} ${c.fe} | ${formatWt(c.wt)}`}>
+      <button
+        key={key}
+        onClick={() => setSelectedCn(c.cn)}
+        className={`relative border ${cellColor(c)} hover:brightness-110 active:scale-95 transition flex-shrink-0 overflow-hidden`}
+        style={{ width: cellW, height: cellH, padding: 1, fontSize }}
+      >
         {needsShift && (
-          <div className="absolute top-0 left-0 text-[10px] leading-none bg-amber-400 text-slate-900 rounded-br px-0.5 font-black">
+          <div className="absolute top-0 left-0 bg-amber-400 text-slate-900 px-0.5 font-black leading-none rounded-br" style={{ fontSize: fontSize - 1 }}>
             ⬆{needsShift}
           </div>
         )}
-        {isShiftTarget && (
-          <div className="absolute top-0 left-0 text-[10px] leading-none bg-amber-300 text-slate-900 rounded-br px-0.5 font-black">
-            🔄
+        {(c.dg || c.rf || c.tk) && (
+          <div className="absolute top-0 right-0 leading-none" style={{ fontSize: fontSize - 1 }}>
+            {c.dg && '🔥'}{c.rf && '❄'}{c.tk && '⬛'}
+          </div>
+        )}
+        <div className="text-left mono leading-tight" style={{ fontSize: fontSize - 1 }}>
+          <div className="font-bold truncate">
+            {polLabel}/{transit && `${transit}`}*<span className={ptk ? 'text-red-700' : ''}>{podLabel}</span>
+          </div>
+          <div className="font-black truncate" style={{ fontSize }}>
+            {isMobile ? (c.cn || '').slice(-7) : c.cn}
+          </div>
+          <div className="truncate opacity-80">
+            {fe} {wt} {typeLabel}
+          </div>
+          {c.tmp && <div className="text-cyan-700 font-bold truncate">{c.tmp}°C</div>}
+        </div>
+      </button>
+    );
+  };
+  
+  // 통계
+  const ptkCount = pageContainers.filter(c => isPtk(c) || dischargeCns.has(c.cn)).length;
+  const completedCount = pageContainers.filter(c => completedMap[c.cn]).length;
+  const shiftCount = Object.keys(shiftingMap.needsShift).filter(cn => 
+    pageContainers.some(c => c.cn === cn)
+  ).length;
+  
+  // 전체 통합 모드 (모바일에서 1번~끝까지 한 번에 스크롤)
+  const [allBaysMode, setAllBaysMode] = useState(false);
+  
+  return (
+    <div className="space-y-2">
+      {/* 헤더 */}
+      <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-2.5 flex flex-wrap items-center gap-2 text-xs">
+        <div className="font-bold flex items-center gap-1.5 text-blue-200">
+          <ArrowDownToLine className="w-4 h-4 text-blue-400"/>
+          {currentPage.title}
+          <span className="text-[10px] text-slate-500">({safeIdx + 1}/{pages.length})</span>
+        </div>
+        <span className="text-slate-400">평택: <span className="font-bold mono text-yellow-300">{ptkCount}</span></span>
+        <span className="text-slate-400">완료: <span className="font-bold mono text-emerald-300">{completedCount}</span></span>
+        {shiftCount > 0 && (
+          <span className="bg-orange-900/40 border border-orange-600/50 text-orange-200 px-2 py-0.5 rounded text-[10px] font-bold">
+            ⚠ 시프팅 {shiftCount}
+          </span>
+        )}
+      </div>
+      
+      {/* 컨트롤 — 줌, 페이지, 전체모드 */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-1">
+          <button onClick={() => setZoom(z => Math.max(0.3, z - 0.2))} 
+            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 rounded font-bold text-lg">−</button>
+          <div className="w-12 text-center text-xs mono">{Math.round(zoom * 100)}%</div>
+          <button onClick={() => setZoom(z => Math.min(3, z + 0.2))} 
+            className="w-9 h-9 bg-slate-800 hover:bg-slate-700 rounded font-bold text-lg">+</button>
+          <button onClick={() => setZoom(isMobile ? 0.6 : 1.0)} 
+            className="px-2 h-9 bg-slate-800 hover:bg-slate-700 rounded text-[10px]">기본</button>
+        </div>
+        <div className="flex items-center gap-1 ml-auto">
+          <button onClick={() => setAllBaysMode(m => !m)}
+            className={`px-3 h-9 rounded text-[10px] font-bold ${allBaysMode ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300'}`}>
+            {allBaysMode ? '✓ 전체보기' : '전체보기'}
+          </button>
+        </div>
+        {!allBaysMode && (
+          <div className="flex gap-1 w-full sm:w-auto">
+            <button onClick={() => setPageIdx(Math.max(0, safeIdx - 1))} disabled={safeIdx === 0} 
+              className="flex-1 sm:flex-none w-12 h-9 bg-slate-800 hover:bg-slate-700 rounded flex items-center justify-center disabled:opacity-30">
+              <ChevronLeft className="w-4 h-4"/>
+            </button>
+            <select value={safeIdx} onChange={e => setPageIdx(parseInt(e.target.value))}
+              className="px-2 h-9 bg-slate-800 border border-slate-700 rounded text-xs mono">
+              {pages.map((p, i) => <option key={i} value={i}>{p.title}</option>)}
+            </select>
+            <button onClick={() => setPageIdx(Math.min(pages.length - 1, safeIdx + 1))} disabled={safeIdx === pages.length - 1}
+              className="flex-1 sm:flex-none w-12 h-9 bg-slate-800 hover:bg-slate-700 rounded flex items-center justify-center disabled:opacity-30">
+              <ChevronRight className="w-4 h-4"/>
+            </button>
+          </div>
+        )}
+      </div>
+      
+      {/* 범례 */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-wrap gap-2 text-[10px]">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-yellow-200 border border-yellow-500"></span>평택 양하</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-200 border border-orange-400"></span>시프팅</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-200 border border-purple-400"></span>X-RAY</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-white border border-slate-300"></span>완료</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-300"></span>통과</span>
+      </div>
+      
+      {/* 베이 그림 */}
+      <div ref={scrollRef} 
+        className="bg-white border border-slate-700 rounded-lg p-3 overflow-auto"
+        style={{ touchAction: 'pan-x pan-y', maxHeight: isMobile ? '60vh' : '75vh' }}
+      >
+        {allBaysMode ? (
+          // 전체 베이 모드: 1번부터 끝까지 위→아래 스크롤
+          <div className="space-y-6">
+            {pages.map((page, pIdx) => (
+              <BaySection key={pIdx}
+                page={page}
+                bayGroups={bayGroups}
+                completedMap={completedMap}
+                xrayList={xrayList}
+                dischargeCns={dischargeCns}
+                shiftingMap={shiftingMap}
+                isPtk={isPtk}
+                setSelectedCn={setSelectedCn}
+                cellW={cellW} cellH={cellH} fontSize={fontSize}
+                isMobile={isMobile}
+                cellColor={cellColor}
+              />
+            ))}
+          </div>
+        ) : (
+          // 단일 페이지 모드
+          <BaySection
+            page={currentPage}
+            bayGroups={bayGroups}
+            completedMap={completedMap}
+            xrayList={xrayList}
+            dischargeCns={dischargeCns}
+            shiftingMap={shiftingMap}
+            isPtk={isPtk}
+            setSelectedCn={setSelectedCn}
+            cellW={cellW} cellH={cellH} fontSize={fontSize}
+            isMobile={isMobile}
+            cellColor={cellColor}
+          />
+        )}
+      </div>
+      
+      {/* 모바일 안내 */}
+      {isMobile && (
+        <div className="text-[10px] text-slate-500 text-center">
+          💡 두 손가락으로 확대/축소 · 한 손가락으로 스크롤
+        </div>
+      )}
+    </div>
+  );
+}
+
+// === 베이 한 페이지 (DECK + 해치커버 + HOLD) ===
+function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor }) {
+  const pageContainers = [
+    ...(page.evenBay ? bayGroups[page.evenBay] || [] : []),
+    ...(page.oddBay ? bayGroups[page.oddBay] || [] : []),
+  ];
+  
+  const sortRows = (rows) => {
+    const arr = Array.from(new Set(rows));
+    return arr.sort((a, b) => {
+      const na = parseInt(a), nb = parseInt(b);
+      if (na === 0 && nb !== 0) return -0.5;
+      if (nb === 0 && na !== 0) return 0.5;
+      const aEven = na % 2 === 0, bEven = nb % 2 === 0;
+      if (aEven && !bEven) return -1;
+      if (!aEven && bEven) return 1;
+      if (aEven && bEven) return nb - na;
+      return na - nb;
+    });
+  };
+  
+  const deckContainers = pageContainers.filter(c => parseInt(c.tier) >= 80);
+  const holdContainers = pageContainers.filter(c => parseInt(c.tier) < 80);
+  
+  const deckRows = sortRows(deckContainers.map(c => c.row));
+  const deckTiers = Array.from(new Set(deckContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  const holdRows = sortRows(holdContainers.map(c => c.row));
+  const holdTiers = Array.from(new Set(holdContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  
+  // 모든 ROW 통합 (DECK + HOLD 같은 컬럼 정렬)
+  const allRows = sortRows([...deckRows, ...holdRows]);
+  
+  const getCell = (row, tier) => pageContainers.find(c => c.row === row && c.tier === tier);
+  
+  const renderCell = (row, tier) => {
+    const c = getCell(row, tier);
+    const key = `${row}-${tier}`;
+    
+    if (!c) {
+      return (
+        <div key={key}
+          className="border border-dashed border-slate-300 flex-shrink-0 bg-slate-50/50"
+          style={{ width: cellW, height: cellH }}
+        />
+      );
+    }
+    
+    const needsShift = shiftingMap.needsShift[c.cn];
+    const ptk = isPtk(c);
+    const fe = c.fe || 'F';
+    const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '';
+    const typeLabel = isoToLabel(c.iso);
+    const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3);
+    const podLabel = (c.pod || '').replace(/^KR/, '').slice(0, 3);
+    
+    return (
+      <button
+        key={key}
+        onClick={() => setSelectedCn(c.cn)}
+        className={`relative border ${cellColor(c)} hover:brightness-95 active:scale-95 transition flex-shrink-0 overflow-hidden`}
+        style={{ width: cellW, height: cellH, padding: 2, fontSize }}
+      >
+        {needsShift && (
+          <div className="absolute top-0 left-0 bg-amber-500 text-slate-900 px-0.5 font-black leading-none rounded-br z-10" 
+            style={{ fontSize: fontSize - 1 }}>
+            ⬆{needsShift}
           </div>
         )}
         {(c.dg || c.rf || c.tk) && (
-          <div className="absolute top-0 right-0 text-[8px] leading-none">
-            {c.dg && '🔥'}
-            {c.rf && '❄'}
-            {c.tk && '⬛'}
+          <div className="absolute top-0 right-0 leading-none z-10" style={{ fontSize: fontSize - 1 }}>
+            {c.dg && '🔥'}{c.rf && '❄'}{c.tk && '⬛'}
           </div>
         )}
-        <div className="w-full text-center whitespace-nowrap overflow-hidden text-ellipsis">
-          <span className="sm:hidden">{c.cn ? c.cn.slice(-4) : ''}</span>
-          <span className="hidden sm:inline lg:hidden">{c.cn ? c.cn.slice(-7) : ''}</span>
-          <span className="hidden lg:inline">{c.cn || ''}</span>
-        </div>
-        <div className="text-[7px] sm:text-[8px] opacity-90 mt-0.5">
-          <span>{c.fe || 'F'}</span>
-          <span className="ml-0.5">{isoToLabel(c.iso)}</span>
+        <div className="text-left mono leading-tight w-full">
+          <div className="font-bold truncate" style={{ fontSize: fontSize - 1 }}>
+            {polLabel}/<span className={ptk ? 'text-red-700 font-black' : ''}>*{podLabel}</span>
+          </div>
+          <div className="font-black truncate" style={{ fontSize }}>
+            {isMobile ? (c.cn || '').slice(-7) : c.cn}
+          </div>
+          <div className="truncate opacity-90" style={{ fontSize: fontSize - 1 }}>
+            {fe} {wt} {typeLabel}
+          </div>
+          {c.tmp ? (
+            <div className="text-cyan-700 font-bold truncate" style={{ fontSize: fontSize - 1 }}>
+              {c.tmp}°C
+            </div>
+          ) : (
+            <div className="text-slate-500 truncate" style={{ fontSize: fontSize - 2 }}>
+              {c.bay}{c.row}{c.tier}
+            </div>
+          )}
         </div>
       </button>
     );
   };
   
   return (
-    <div className="space-y-3">
-      {/* 정보 배너 */}
-      <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-3">
-        <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
-          <div className="font-bold flex items-center gap-1.5 text-blue-200">
-            <ArrowDownToLine className="w-4 h-4 text-blue-400"/>양하 베이 {currentPage.title}
-            <span className="text-[10px] text-slate-500 ml-1">({safeIdx + 1}/{pages.length})</span>
-          </div>
-          <span className="text-slate-400">강조: <span className="font-bold mono text-red-300">평택 양하 {ptkCount}</span></span>
-          <span className="text-slate-500">|</span>
-          <span className="text-slate-400">전체: <span className="mono">{ediContainers.length}</span></span>
-          {shiftCount > 0 && (
-            <>
-              <span className="text-slate-500">|</span>
-              <span className="bg-amber-900/40 border border-amber-600/50 text-amber-200 px-2 py-1 rounded text-xs font-bold">
-                ⚠ 시프팅: 양하 {shiftCount} (위 {shiftTargetCount})
-              </span>
-            </>
-          )}
-        </div>
+    <div className="space-y-1">
+      {/* 페이지 제목 */}
+      <div className="text-center font-black text-slate-800 mb-1">
+        {page.title}
       </div>
       
-      {/* 헤더 + 범례 + 페이지 버튼 */}
-      <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex gap-1.5 text-[10px] sm:text-xs flex-wrap items-center">
-            <Legend color="bg-red-600" label="평택 양하"/>
-            <Legend color="bg-amber-600" label="시프팅"/>
-            <Legend color="bg-amber-500" label="X-RAY"/>
-            <Legend color="bg-slate-600" label="통과"/>
-          </div>
-          <div className="flex gap-1">
-            <button onClick={() => setPageIdx(Math.max(0, safeIdx - 1))} disabled={safeIdx === 0}
-              className="w-9 h-9 bg-slate-800 hover:bg-slate-700 rounded flex items-center justify-center disabled:opacity-30">
-              <ChevronLeft className="w-4 h-4"/>
-            </button>
-            <button onClick={() => setPageIdx(Math.min(pages.length - 1, safeIdx + 1))} disabled={safeIdx === pages.length - 1}
-              className="w-9 h-9 bg-slate-800 hover:bg-slate-700 rounded flex items-center justify-center disabled:opacity-30">
-              <ChevronRight className="w-4 h-4"/>
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      <div className="flex gap-2">
-        {/* 베이 플랜 영역 */}
-        <div ref={scrollRef}
-          className="flex-1 bg-slate-900 border border-slate-800 rounded-lg p-3 overflow-x-auto overscroll-x-contain"
-          style={{ touchAction: 'pan-x pan-y' }}>
-          {deckTiers.length > 0 && (
-            <div className="mb-3">
-              <div className="text-[10px] text-slate-500 mb-1">⬆ DECK (갑판 위)</div>
-              {deckTiers.map(tier => (
-                <div key={tier} className="flex gap-1 mb-1">
-                  <div className="w-6 text-[9px] text-slate-500 mono flex items-center justify-center">{tier}</div>
-                  {currentPage.bays.map(bay => 
-                    rows.map(row => renderCell(bay, row, tier))
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          
-          {holdTiers.length > 0 && (
-            <div className="mt-2 pt-2 border-t-2 border-slate-700">
-              <div className="text-[10px] text-slate-500 mb-1">⬇ HOLD (선창 안)</div>
-              {holdTiers.map(tier => (
-                <div key={tier} className="flex gap-1 mb-1">
-                  <div className="w-6 text-[9px] text-slate-500 mono flex items-center justify-center">{tier}</div>
-                  {currentPage.bays.map(bay => 
-                    rows.map(row => renderCell(bay, row, tier))
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        
-        {/* 우측 BAY 목록 */}
-        <div className="hidden md:block w-20 flex-shrink-0 bg-slate-900 border border-slate-800 rounded-lg p-2 overflow-y-auto sticky top-24" style={{ maxHeight: '70vh' }}>
-          <div className="text-[9px] text-slate-500 mb-1 text-center">BAY</div>
-          <div className="space-y-1">
-            {pages.map((p, i) => (
-              <button key={i} onClick={() => setPageIdx(i)}
-                className={`w-full px-1 py-1 rounded text-[10px] mono font-bold transition ${
-                  i === safeIdx ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}>
-                {p.title}
-              </button>
+      {/* DECK 섹션 */}
+      {deckTiers.length > 0 && (
+        <div>
+          <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬆ DECK</div>
+          {/* ROW 헤더 */}
+          <div className="flex gap-0.5 mb-0.5">
+            <div style={{ width: 24 }}></div>
+            {allRows.map(row => (
+              <div key={`dh-${row}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0" 
+                style={{ width: cellW }}>{row}</div>
             ))}
+            <div style={{ width: 24 }}></div>
+          </div>
+          {/* TIER × ROW 그리드 */}
+          {deckTiers.map(tier => (
+            <div key={tier} className="flex gap-0.5 mb-0.5 items-center">
+              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier}</div>
+              {allRows.map(row => renderCell(row, tier))}
+              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* 해치커버 (굵은 검은 선) */}
+      {deckTiers.length > 0 && holdTiers.length > 0 && (
+        <div className="border-t-4 border-slate-900 my-2"></div>
+      )}
+      
+      {/* HOLD 섹션 */}
+      {holdTiers.length > 0 && (
+        <div>
+          <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬇ HOLD</div>
+          {holdTiers.map(tier => (
+            <div key={tier} className="flex gap-0.5 mb-0.5 items-center">
+              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier}</div>
+              {allRows.map(row => renderCell(row, tier))}
+              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier}</div>
+            </div>
+          ))}
+          {/* ROW 하단 헤더 */}
+          <div className="flex gap-0.5 mt-0.5">
+            <div style={{ width: 24 }}></div>
+            {allRows.map(row => (
+              <div key={`hb-${row}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
+                style={{ width: cellW }}>{row}</div>
+            ))}
+            <div style={{ width: 24 }}></div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
+
 function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn }) {
   return <div className="space-y-3">
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
