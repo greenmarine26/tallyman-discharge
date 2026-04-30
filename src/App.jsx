@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { 
   fmtPos, formatWt, isoToLabel, 
-  parseBAPLIE, parseListExcel, parseXrayList 
+  parseBAPLIE, parseAscFile, parseListExcel, parseXrayList 
 } from './utils.js';
 import {
   fbAddVoyage, fbUpdateVoyage, fbDeleteVoyage,
@@ -576,10 +576,18 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     setEdiStatus({ loading: true, msg: `파싱 중: ${file.name}` });
     try {
       const text = await file.text();
-      const r = parseBAPLIE(text);
-      if (r.containers.length === 0) { setEdiStatus({ ok: false, msg: 'EDI 컨테이너 없음' }); return; }
-      await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd, r.pol);
-      setEdiStatus({ ok: true, msg: `${r.vsl} ${r.voy} — ${r.containers.length}대 (Firebase 등록)` });
+      // ASC 자동 감지 ($604 헤더)
+      let r;
+      let fileType = 'EDI';
+      if (text.startsWith('$604') || text.substring(0, 200).includes('$604')) {
+        r = parseAscFile(text);
+        fileType = 'ASC';
+      } else {
+        r = parseBAPLIE(text);
+      }
+      if (r.containers.length === 0) { setEdiStatus({ ok: false, msg: `${fileType} 컨테이너 없음` }); return; }
+      await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '');
+      setEdiStatus({ ok: true, msg: `[${fileType}] ${r.vsl} ${r.voy} — ${r.containers.length}대 (Firebase 등록)` });
     } catch (e) { setEdiStatus({ ok: false, msg: '실패: ' + e.message }); }
     if (ediRef.current) ediRef.current.value = '';
   };
@@ -615,7 +623,7 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
       </div>
     </div>
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
-      <div className="font-bold text-blue-200 text-sm">1. 양하 EDI (BAPLIE)</div>
+      <div className="font-bold text-blue-200 text-sm">1. 양하 자료 (ASC / EDI / TXT 자동 인식)</div>
       <input ref={ediRef} type="file" accept=".edi,.EDI,.txt,.TXT,.asc,.ASC" onChange={e => handleEdi(e.target.files?.[0])} className="block w-full text-xs text-slate-300 mono file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-blue-500 file:text-slate-900 cursor-pointer"/>
       {ediStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${ediStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : ediStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{ediStatus.msg}</div>}
     </div>
