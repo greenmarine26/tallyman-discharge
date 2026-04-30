@@ -431,10 +431,12 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
       if (e.ctrlKey) {
         e.preventDefault();
         setZoom(z => Math.max(0.3, Math.min(3, z - e.deltaY * 0.001)));
-      } else if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      } else if (e.shiftKey) {
+        // Shift + 휠 = 가로 스크롤
         el.scrollLeft += e.deltaY;
         e.preventDefault();
       }
+      // 그 외는 브라우저 기본 (세로 스크롤)
     };
     
     // 터치 핀치 줌
@@ -559,18 +561,23 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
   // ROW 순서: 좌현 짝수 큰→작은, 가운데 00, 01, 우현 홀수 작은→큰
   const sortRows = (rows) => {
     const arr = Array.from(new Set(rows));
+    // 좌현 (짝수, 00 제외): 큰 번호 왼쪽 → 작은 번호 가운데쪽
+    // 가운데: 00
+    // 우현 (홀수): 작은 번호 왼쪽 (가운데) → 큰 번호 오른쪽
     return arr.sort((a, b) => {
       const na = parseInt(a), nb = parseInt(b);
-      // 좌현(짝수, 0 제외): 큰 번호가 왼쪽
-      // 우현(홀수): 작은 번호가 가운데, 큰 번호가 오른쪽
-      // 00, 01 은 가운데
-      if (na === 0 && nb !== 0) return -0.5;
-      if (nb === 0 && na !== 0) return 0.5;
       const aEven = na % 2 === 0, bEven = nb % 2 === 0;
-      if (aEven && !bEven) return -1; // 좌현 먼저
-      if (!aEven && bEven) return 1;
-      if (aEven && bEven) return nb - na; // 좌현: 큰 번호 왼쪽
-      return na - nb; // 우현: 작은 번호 왼쪽
+      // 둘 다 짝수 (00 포함)
+      if (aEven && bEven) {
+        // 00 은 짝수 그룹의 가장 마지막 (오른쪽 끝)
+        if (na === 0) return 1;
+        if (nb === 0) return -1;
+        return nb - na; // 큰 번호가 왼쪽
+      }
+      // 둘 다 홀수
+      if (!aEven && !bEven) return na - nb; // 작은 번호가 왼쪽
+      // 짝수 vs 홀수 → 짝수가 먼저 (왼쪽)
+      return aEven ? -1 : 1;
     });
   };
   
@@ -750,7 +757,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
       {/* 베이 그림 */}
       <div ref={scrollRef} 
         className="bg-white border border-slate-700 rounded-lg p-3 overflow-auto"
-        style={{ touchAction: 'pan-x pan-y', maxHeight: isMobile ? '60vh' : '75vh' }}
+        style={{ touchAction: 'pan-x pan-y', minHeight: isMobile ? '70vh' : '80vh', maxHeight: isMobile ? '78vh' : '85vh' }}
       >
         {allBaysMode ? (
           // 전체 베이 모드: 1번부터 끝까지 위→아래 스크롤
@@ -810,13 +817,14 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
     const arr = Array.from(new Set(rows));
     return arr.sort((a, b) => {
       const na = parseInt(a), nb = parseInt(b);
-      if (na === 0 && nb !== 0) return -0.5;
-      if (nb === 0 && na !== 0) return 0.5;
       const aEven = na % 2 === 0, bEven = nb % 2 === 0;
-      if (aEven && !bEven) return -1;
-      if (!aEven && bEven) return 1;
-      if (aEven && bEven) return nb - na;
-      return na - nb;
+      if (aEven && bEven) {
+        if (na === 0) return 1;
+        if (nb === 0) return -1;
+        return nb - na;
+      }
+      if (!aEven && !bEven) return na - nb;
+      return aEven ? -1 : 1;
     });
   };
   
