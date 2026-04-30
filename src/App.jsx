@@ -859,8 +859,10 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   
   // 좌우 5:5 균형
   const leftRows = allRowsRaw.filter(r => parseInt(r) % 2 === 0 && parseInt(r) !== 0);
-  const centerRows = allRowsRaw.filter(r => parseInt(r) === 0);
   const rightRows = allRowsRaw.filter(r => parseInt(r) % 2 === 1);
+  
+  // 00 은 가운데 기준점으로 항상 표시 (없어도 빈 칸으로)
+  const centerRows = ['00'];
   
   const sideMax = Math.max(leftRows.length, rightRows.length);
   const leftPadded = [
