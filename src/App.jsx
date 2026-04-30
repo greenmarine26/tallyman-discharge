@@ -5,7 +5,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Search, MapPin, ArrowDownToLine, Upload, Check, X,
   ScanLine, FileText, Trash2, ChevronLeft, ChevronRight,
-  RefreshCw, User, Cloud, CloudOff
+  RefreshCw, User, Cloud, CloudOff,
+  Mic, MicOff, Volume2, VolumeX, Ship
 } from 'lucide-react';
 import { 
   fmtPos, formatWt, isoToLabel, 
@@ -243,7 +244,7 @@ export default function App() {
         )}
         {current && tab === 'list' && <DischargeListTab list={dischargeList} setSelectedCn={setSelectedCn} xrayList={xrayList} completedMap={completedMap} toggleXray={toggleXray}/>}
         {current && tab === 'bay' && <BayTab ediContainers={ediContainers} dischargeCns={dischargeCns} xrayList={xrayList} setSelectedCn={setSelectedCn} completedMap={completedMap}/>}
-        {tab === 'search' && <SearchTab query={query} setQuery={setQuery} results={searchResults} xrayList={xrayList} dischargeCns={dischargeCns} setSelectedCn={setSelectedCn}/>}
+        {tab === 'search' && <SearchTab query={query} setQuery={setQuery} results={searchResults} xrayList={xrayList} dischargeCns={dischargeCns} setSelectedCn={setSelectedCn} vsl={current?.vsl}/>}
         {tab === 'voyage' && <VoyageTab voyages={voyagesAll} activeKey={activeKey} setActiveKey={saveActive} addVoyage={addVoyage} deleteVoyage={deleteVoyage} applyDischargeList={applyDischargeList} addXrayBulk={(cnList) => fbAddXrayBulk(activeKey, cnList)}/>}
       </main>
       
@@ -807,12 +808,34 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
 }
 
 // === 베이 한 페이지 (DECK + 해치커버 + HOLD) ===
+// === 베이 한 페이지 — 5:5 비율 + X 표시 ===
 function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor }) {
-  const pageContainers = [
-    ...(page.evenBay ? bayGroups[page.evenBay] || [] : []),
-    ...(page.oddBay ? bayGroups[page.oddBay] || [] : []),
-  ];
+  // 짝수 베이 컨 (40피트)
+  const evenContainers = page.evenBay ? (bayGroups[page.evenBay] || []) : [];
+  // 홀수 베이 컨 (20피트)
+  const oddContainers = page.oddBay ? (bayGroups[page.oddBay] || []) : [];
+  const allContainers = [...evenContainers, ...oddContainers];
   
+  // 짝수 베이 (40피트) 가 차지한 ROW 위치 — TIER 별로 모음
+  // 40피트 컨이 ROW 10 에 있으면 → 같은 TIER 의 ROW 09 자리에 X 표시
+  // 40피트 컨이 ROW 06 에 있으면 → 같은 TIER 의 ROW 05 자리에 X 표시
+  // 규칙: 짝수 ROW N → 그 다음 작은 홀수 ROW (N-1) 에 X
+  const xMarks = useMemo(() => {
+    const marks = new Set(); // "row-tier" 형식 키
+    for (const c of evenContainers) {
+      if (!c.row || !c.tier) continue;
+      const evenN = parseInt(c.row);
+      if (evenN === 0 || evenN % 2 !== 0) continue;
+      // 짝수 ROW N 의 40피트 → 홀수 ROW (N-1) 자리에 X
+      const oddN = evenN - 1;
+      if (oddN < 0) continue;
+      const oddRow = String(oddN).padStart(2, '0');
+      marks.add(`${oddRow}-${c.tier}`);
+    }
+    return marks;
+  }, [evenContainers]);
+  
+  // ROW 정렬
   const sortRows = (rows) => {
     const arr = Array.from(new Set(rows));
     return arr.sort((a, b) => {
@@ -828,32 +851,91 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
     });
   };
   
-  const deckContainers = pageContainers.filter(c => parseInt(c.tier) >= 80);
-  const holdContainers = pageContainers.filter(c => parseInt(c.tier) < 80);
+  // X 표시 위치도 ROW 에 포함시켜야 함 (없는 ROW 라도 표시 필요)
+  const allRowsRaw = sortRows([
+    ...allContainers.map(c => c.row),
+    ...Array.from(xMarks).map(k => k.split('-')[0])
+  ]);
   
-  const deckRows = sortRows(deckContainers.map(c => c.row));
-  const deckTiers = Array.from(new Set(deckContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
-  const holdRows = sortRows(holdContainers.map(c => c.row));
-  const holdTiers = Array.from(new Set(holdContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  // 좌우 5:5 균형
+  const leftRows = allRowsRaw.filter(r => parseInt(r) % 2 === 0 && parseInt(r) !== 0);
+  const centerRows = allRowsRaw.filter(r => parseInt(r) === 0);
+  const rightRows = allRowsRaw.filter(r => parseInt(r) % 2 === 1);
   
-  // 모든 ROW 통합 (DECK + HOLD 같은 컬럼 정렬)
-  const allRows = sortRows([...deckRows, ...holdRows]);
+  const sideMax = Math.max(leftRows.length, rightRows.length);
+  const leftPadded = [
+    ...Array(sideMax - leftRows.length).fill(null),
+    ...leftRows
+  ];
+  const rightPadded = [
+    ...rightRows,
+    ...Array(sideMax - rightRows.length).fill(null)
+  ];
+  const allRows = [...leftPadded, ...centerRows, ...rightPadded];
   
-  const getCell = (row, tier) => pageContainers.find(c => c.row === row && c.tier === tier);
+  // DECK / HOLD 분리
+  const allTiers = Array.from(new Set([
+    ...allContainers.map(c => c.tier),
+    ...Array.from(xMarks).map(k => k.split('-')[1])
+  ]));
+  const deckTiers = allTiers.filter(t => parseInt(t) >= 80).sort((a, b) => parseInt(b) - parseInt(a));
+  const holdTiers = allTiers.filter(t => parseInt(t) < 80).sort((a, b) => parseInt(b) - parseInt(a));
   
+  // 상하 5:5 균형 — DECK 와 HOLD 같은 단 개수
+  const tierMax = Math.max(deckTiers.length, holdTiers.length);
+  const deckTiersPadded = [
+    ...Array(tierMax - deckTiers.length).fill(null),
+    ...deckTiers
+  ];
+  const holdTiersPadded = [
+    ...holdTiers,
+    ...Array(tierMax - holdTiers.length).fill(null)
+  ];
+  
+  const getCell = (row, tier) => {
+    if (!row || !tier) return null;
+    return allContainers.find(c => c.row === row && c.tier === tier);
+  };
+  
+  const isXmark = (row, tier) => {
+    if (!row || !tier) return false;
+    return xMarks.has(`${row}-${tier}`);
+  };
+  
+  // 한 셀 렌더링
   const renderCell = (row, tier) => {
-    const c = getCell(row, tier);
-    const key = `${row}-${tier}`;
+    const key = `${row || '_'}-${tier || '_'}`;
     
-    if (!c) {
+    // 빈칸 (TIER 또는 ROW 가 더미)
+    if (!row || !tier) {
       return (
-        <div key={key}
-          className="border border-dashed border-slate-300 flex-shrink-0 bg-slate-50/50"
-          style={{ width: cellW, height: cellH }}
-        />
+        <div key={key} className="border border-dashed border-slate-300 flex-shrink-0 bg-slate-50/30"
+          style={{ width: cellW, height: cellH }}/>
       );
     }
     
+    // X 표시 (40피트 차지)
+    if (isXmark(row, tier)) {
+      return (
+        <div key={key} 
+          className="border border-slate-400 bg-slate-100 flex-shrink-0 flex items-center justify-center"
+          style={{ width: cellW, height: cellH }}>
+          <span className="text-slate-500 font-black" style={{ fontSize: fontSize * 2.5 }}>×</span>
+        </div>
+      );
+    }
+    
+    const c = getCell(row, tier);
+    
+    if (!c) {
+      // 빈 셀 (컨 없음)
+      return (
+        <div key={key} className="border border-dashed border-slate-300 flex-shrink-0 bg-white"
+          style={{ width: cellW, height: cellH }}/>
+      );
+    }
+    
+    // 컨테이너 셀
     const needsShift = shiftingMap.needsShift[c.cn];
     const ptk = isPtk(c);
     const fe = c.fe || 'F';
@@ -870,7 +952,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
         style={{ width: cellW, height: cellH, padding: 2, fontSize }}
       >
         {needsShift && (
-          <div className="absolute top-0 left-0 bg-amber-500 text-slate-900 px-0.5 font-black leading-none rounded-br z-10" 
+          <div className="absolute top-0 left-0 bg-amber-500 text-slate-900 px-0.5 font-black leading-none rounded-br z-10"
             style={{ fontSize: fontSize - 1 }}>
             ⬆{needsShift}
           </div>
@@ -907,92 +989,261 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   return (
     <div className="space-y-1">
       {/* 페이지 제목 */}
-      <div className="text-center font-black text-slate-800 mb-1">
+      <div className="text-center font-black text-slate-800 mb-1" style={{ fontSize: fontSize + 4 }}>
         {page.title}
       </div>
       
-      {/* DECK 섹션 */}
-      {deckTiers.length > 0 && (
-        <div>
-          <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬆ DECK</div>
-          {/* ROW 헤더 */}
-          <div className="flex gap-0.5 mb-0.5">
-            <div style={{ width: 24 }}></div>
-            {allRows.map(row => (
-              <div key={`dh-${row}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0" 
-                style={{ width: cellW }}>{row}</div>
-            ))}
-            <div style={{ width: 24 }}></div>
-          </div>
-          {/* TIER × ROW 그리드 */}
-          {deckTiers.map(tier => (
-            <div key={tier} className="flex gap-0.5 mb-0.5 items-center">
-              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier}</div>
-              {allRows.map(row => renderCell(row, tier))}
-              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier}</div>
-            </div>
+      {/* DECK 섹션 (위쪽 5/10) */}
+      <div>
+        <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬆ DECK</div>
+        {/* ROW 헤더 (위) */}
+        <div className="flex gap-0.5 mb-0.5">
+          <div style={{ width: 24 }}></div>
+          {allRows.map((row, idx) => (
+            <div key={`dh-${idx}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
+              style={{ width: cellW }}>{row || ''}</div>
           ))}
+          <div style={{ width: 24 }}></div>
         </div>
-      )}
+        {/* DECK TIER × ROW */}
+        {deckTiersPadded.map((tier, ti) => (
+          <div key={`dt-${ti}`} className="flex gap-0.5 mb-0.5 items-center">
+            <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier || ''}</div>
+            {allRows.map((row, ri) => (
+              <React.Fragment key={`d-${ti}-${ri}`}>
+                {renderCell(row, tier)}
+              </React.Fragment>
+            ))}
+            <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier || ''}</div>
+          </div>
+        ))}
+      </div>
       
       {/* 해치커버 (굵은 검은 선) */}
-      {deckTiers.length > 0 && holdTiers.length > 0 && (
-        <div className="border-t-4 border-slate-900 my-2"></div>
-      )}
+      <div className="border-t-4 border-slate-900 my-2"></div>
       
-      {/* HOLD 섹션 */}
-      {holdTiers.length > 0 && (
-        <div>
-          <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬇ HOLD</div>
-          {holdTiers.map(tier => (
-            <div key={tier} className="flex gap-0.5 mb-0.5 items-center">
-              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier}</div>
-              {allRows.map(row => renderCell(row, tier))}
-              <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier}</div>
-            </div>
-          ))}
-          {/* ROW 하단 헤더 */}
-          <div className="flex gap-0.5 mt-0.5">
-            <div style={{ width: 24 }}></div>
-            {allRows.map(row => (
-              <div key={`hb-${row}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
-                style={{ width: cellW }}>{row}</div>
+      {/* HOLD 섹션 (아래쪽 5/10) */}
+      <div>
+        <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬇ HOLD</div>
+        {holdTiersPadded.map((tier, ti) => (
+          <div key={`ht-${ti}`} className="flex gap-0.5 mb-0.5 items-center">
+            <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 text-right pr-1" style={{ width: 24 }}>{tier || ''}</div>
+            {allRows.map((row, ri) => (
+              <React.Fragment key={`h-${ti}-${ri}`}>
+                {renderCell(row, tier)}
+              </React.Fragment>
             ))}
-            <div style={{ width: 24 }}></div>
+            <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier || ''}</div>
           </div>
+        ))}
+        {/* ROW 헤더 (아래) */}
+        <div className="flex gap-0.5 mt-0.5">
+          <div style={{ width: 24 }}></div>
+          {allRows.map((row, idx) => (
+            <div key={`hb-${idx}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
+              style={{ width: cellW }}>{row || ''}</div>
+          ))}
+          <div style={{ width: 24 }}></div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn }) {
-  return <div className="space-y-3">
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"/>
-        <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="컨테이너 / 끝 4자리 / 실 / B/L" className="w-full pl-9 pr-9 py-2.5 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
-        {query && <button onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded hover:bg-slate-700 flex items-center justify-center"><X className="w-4 h-4"/></button>}
-      </div>
-      <div className="text-[10px] text-slate-500 mt-1.5">{query.length < 2 ? '2자 이상 입력. 4자리는 끝자리 매칭.' : `${results.length}개 결과`}</div>
-    </div>
-    <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden divide-y divide-slate-800">
-      {results.map((c, i) => {
-        const isPtk = dischargeCns.has(c.cn);
-        return <div key={c.cn + i} onClick={() => setSelectedCn(c.cn)} className={`px-3 py-2.5 cursor-pointer hover:bg-slate-800/50 ${isPtk ? 'bg-red-950/20' : ''}`}>
-          <div className="flex items-center gap-2 flex-wrap">
-            {isPtk && <span className="text-red-300 text-xs font-bold">[양하]</span>}
-            <span className="mono font-black text-sm">{c.cn}</span>
-            <span className={`text-[10px] mono px-1.5 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe}</span>
-            {c.dg && <span className="text-red-400">🔥</span>}{c.rf && <span className="text-cyan-400">❄</span>}{c.tk && <span className="text-orange-400">⬛</span>}
-            {xrayList[c.cn] && <span className="bg-amber-500 text-slate-900 text-[9px] px-1 rounded font-bold">X-RAY</span>}
+function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn, vsl }) {
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [voiceSupported, setVoiceSupported] = useState(true);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const recognitionRef = useRef(null);
+  const lastSpokenRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setVoiceSupported(false);
+      return;
+    }
+    const r = new SR();
+    r.lang = 'ko-KR';
+    r.continuous = false;
+    r.interimResults = true;
+    r.maxAlternatives = 3;
+
+    r.onresult = (e) => {
+      const last = e.results[e.results.length - 1];
+      const text = last[0].transcript;
+      setTranscript(text);
+      if (last.isFinal) {
+        const digits = parseSpokenDigits(text);
+        if (digits && digits.length >= 2) {
+          setQuery(digits);
+        } else {
+          speakText('숫자를 인식하지 못했습니다. 다시 말씀해주세요.');
+        }
+      }
+    };
+    r.onend = () => setIsListening(false);
+    r.onerror = (e) => {
+      setIsListening(false);
+      if (e.error === 'not-allowed') {
+        speakText('마이크 권한이 필요합니다.');
+      }
+    };
+    
+    recognitionRef.current = r;
+    return () => {
+      try { r.stop(); } catch(_) {}
+    };
+  }, []);
+
+  const startListening = () => {
+    if (!recognitionRef.current) return;
+    setTranscript('');
+    setIsListening(true);
+    try {
+      recognitionRef.current.start();
+    } catch (e) {
+      setIsListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    if (!recognitionRef.current) return;
+    try {
+      recognitionRef.current.stop();
+    } catch (e) {}
+    setIsListening(false);
+  };
+
+  // 검색 결과 1개 → 자동 음성 안내
+  useEffect(() => {
+    if (!autoSpeak) return;
+    if (results.length === 1 && results[0].cn !== lastSpokenRef.current) {
+      lastSpokenRef.current = results[0].cn;
+      const c = results[0];
+      const xrayOn = !!xrayList[c.cn];
+      speakContainer(c, xrayOn);
+    }
+  }, [results, autoSpeak, xrayList]);
+
+  return (
+    <div className="space-y-3">
+      {/* 선박 추적 */}
+      {vsl && <VesselTracker vsl={vsl}/>}
+      
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"/>
+          <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="컨테이너 / 끝 4자리 / 실 / B/L"
+            className="w-full pl-9 pr-20 py-2.5 bg-slate-800 border border-slate-700 rounded text-sm mono"/>
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {voiceSupported && (
+              <button onClick={isListening ? stopListening : startListening}
+                className={`w-9 h-9 rounded flex items-center justify-center transition ${
+                  isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-amber-500 hover:bg-amber-400 text-slate-900'
+                }`} title="음성 검색">
+                {isListening ? <MicOff className="w-4 h-4"/> : <Mic className="w-4 h-4"/>}
+              </button>
+            )}
+            <button onClick={() => setAutoSpeak(!autoSpeak)}
+              className={`w-7 h-9 rounded flex items-center justify-center ${
+                autoSpeak ? 'text-amber-300' : 'text-slate-500'
+              }`} title={autoSpeak ? '음성 안내 끄기' : '음성 안내 켜기'}>
+              {autoSpeak ? <Volume2 className="w-4 h-4"/> : <VolumeX className="w-4 h-4"/>}
+            </button>
+            {query && (
+              <button onClick={() => setQuery('')} className="w-7 h-9 rounded hover:bg-slate-700 flex items-center justify-center">
+                <X className="w-4 h-4"/>
+              </button>
+            )}
           </div>
-          <div className="text-[11px] text-slate-400 mono mt-0.5">{c.bay && `${fmtPos(c)} · `}{isoToLabel(c.iso)}{c.pol && ` · POL ${c.pol}`}{c.sl && ` · 실 ${c.sl}`}</div>
-        </div>;
-      })}
-      {query.length >= 2 && results.length === 0 && <div className="p-8 text-center text-slate-500 text-sm">결과 없음</div>}
+        </div>
+        {isListening && transcript && (
+          <div className="mt-1.5 text-[10px] text-red-300 mono bg-red-900/20 px-2 py-1 rounded">
+            🎙 {transcript}
+          </div>
+        )}
+        <div className="text-[10px] text-slate-500 mt-1.5">
+          {query.length < 2 ? '2자 이상. 4자리 = 끝자리 매칭. 마이크로 음성 검색 가능' : `${results.length}개 결과`}
+        </div>
+      </div>
+      
+      <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden divide-y divide-slate-800">
+        {results.map((c, i) => {
+          const isPtk = dischargeCns.has(c.cn);
+          return (
+            <div key={c.cn + i} onClick={() => setSelectedCn(c.cn)}
+              className={`px-3 py-2.5 cursor-pointer hover:bg-slate-800/50 ${isPtk ? 'bg-red-950/20' : ''}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                {isPtk && <span className="text-red-300 text-xs font-bold">[양하]</span>}
+                <span className="mono font-black text-sm">{c.cn}</span>
+                <span className={`text-[10px] mono px-1.5 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe}</span>
+                {c.dg && <span className="text-red-400">🔥</span>}
+                {c.rf && <span className="text-cyan-400">❄</span>}
+                {c.tk && <span className="text-orange-400">⬛</span>}
+                {xrayList[c.cn] && <span className="bg-amber-500 text-slate-900 text-[9px] px-1 rounded font-bold">X-RAY</span>}
+              </div>
+              <div className="text-[11px] text-slate-400 mono mt-0.5">
+                {c.bay && `${fmtPos(c)} · `}{isoToLabel(c.iso)}
+                {c.pol && ` · POL ${c.pol}`}{c.sl && ` · 실 ${c.sl}`}
+              </div>
+            </div>
+          );
+        })}
+        {query.length >= 2 && results.length === 0 && (
+          <div className="p-8 text-center text-slate-500 text-sm">결과 없음</div>
+        )}
+      </div>
     </div>
-  </div>;
+  );
+}
+
+// === VesselTracker — 선박 위치 추적 사이트 바로가기 ===
+function VesselTracker({ vsl }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    if (open) document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  if (!vsl) return null;
+
+  const q = encodeURIComponent(vsl);
+  const sites = [
+    { name: 'MarineTraffic', url: `https://www.marinetraffic.com/en/ais/index/search/all/keyword:${q}` },
+    { name: 'VesselFinder', url: `https://www.vesselfinder.com/vessels?name=${q}` },
+    { name: 'MyShipTracking', url: `https://www.myshiptracking.com/?search=${q}` },
+    { name: 'ShipFinder', url: `https://www.shipfinder.co/?q=${q}` },
+  ];
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(!open)}
+        className="w-full bg-blue-900/30 border border-blue-700/40 hover:bg-blue-900/50 rounded-lg px-3 py-2 flex items-center gap-2 text-sm">
+        <Ship className="w-4 h-4 text-blue-300"/>
+        <span className="text-blue-200 font-bold flex-1 text-left">선박 위치 추적: {vsl}</span>
+        <ChevronRight className={`w-4 h-4 text-blue-400 transition ${open ? 'rotate-90' : ''}`}/>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-30 p-2 space-y-1">
+          {sites.map(s => (
+            <a key={s.name} href={s.url} target="_blank" rel="noopener noreferrer"
+              className="block px-3 py-2 hover:bg-slate-800 rounded text-sm text-blue-300 hover:text-blue-200">
+              🌐 {s.name} 에서 검색
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, applyDischargeList, addXrayBulk }) {
