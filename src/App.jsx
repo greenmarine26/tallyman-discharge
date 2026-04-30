@@ -732,12 +732,12 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     return 'bg-slate-100 text-slate-500 border-slate-300';
   };
   
-  // 셀 너비/높이 (zoom 적용)
-  const baseW = isMobile ? 78 : 110;
-  const baseH = isMobile ? 76 : 96;
+  // 셀 너비/높이 (zoom 적용) - PDF 5줄 다 보이게
+  const baseW = isMobile ? 110 : 140;
+  const baseH = isMobile ? 88 : 108;
   const cellW = Math.round(baseW * zoom);
   const cellH = Math.round(baseH * zoom);
-  const fontSize = Math.max(7, Math.round(9 * zoom));
+  const fontSize = Math.max(8, Math.round(10 * zoom));
   
   // 한 셀 렌더링 (4줄 PDF 형식)
   const renderCell = (row, tier) => {
@@ -1055,26 +1055,29 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
       );
     }
     
-    // 컨테이너 셀 — PDF 5줄 형식
+    // 컨테이너 셀 — PDF 5줄 형식 (고정폭 정렬)
     const needsShift = shiftingMap.needsShift[c.cn];
     const ptk = isPtk(c);
     const fe = c.fe || 'F';
-    const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '';
-    const typeLabel = isoToLabel(c.iso);
-    const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3);
+    const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '0.0';
+    const typeLabel = isoToLabel(c.iso) || '';
+    const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3).padEnd(3, ' ');
     const podLabel = (c.pod || '').replace(/^KR/, '').slice(0, 3);
-    const transit = c.transit || '';
+    const transit = (c.transit || '').slice(0, 3);
+    const opLabel = (c.op || '').slice(0, 3).padEnd(3, ' ');
     
-    // 위치 (....BAY ROW TIER) - 점 4개 + 6자리
-    const posStr = `....${c.bay || ''}${row}${tier}`;
+    // 위치: ....BAYROWTIER (BAY 2자리, ROW 2자리, TIER 2자리)
+    const bay2 = String(parseInt(c.bay || '0')).padStart(2, '0');
+    const posStr = `....${bay2}${row}${tier}`;
     
-    // 4줄: 특수 정보 (있으면 표시, 없으면 빈줄)
+    // 4줄: 특수 정보
     let specialLine = '';
-    let specialColor = '';
+    let specialColor = 'text-slate-700';
     if (c.dg) {
-      specialLine = `DG${c.un ? ' UN' + c.un : ''}`;
+      specialLine = c.un ? `DG UN${c.un}` : 'DG';
       specialColor = 'text-red-700 font-bold';
     } else if (c.rf && c.tmp) {
+      // 14.0 → "14.0C", -24.0 → "-24.0C"
       specialLine = `${c.tmp}C`;
       specialColor = 'text-cyan-700 font-bold';
     } else if (c.rf) {
@@ -1091,12 +1094,21 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
       specialColor = 'text-purple-700 font-bold';
     }
     
+    // PDF 정렬: "LYG/   *PTK" — / 다음에 공백 패딩 (transit 자리)
+    const line1 = transit 
+      ? `${polLabel}/${transit}*${podLabel}`
+      : `${polLabel}/   *${podLabel}`;
+    
+    // PDF 정렬: "LYG E  6.0 4530" — 공백으로 칸 맞춤
+    const wtPadded = wt.padStart(4, ' '); // "6.0" → " 6.0", "27.7" → "27.7"
+    const line3 = `${opLabel} ${fe}${wtPadded} ${typeLabel}`;
+    
     return (
       <button
         key={key}
         onClick={() => setSelectedCn(c.cn)}
         className={`relative border ${cellColor(c)} hover:brightness-95 active:scale-95 transition flex-shrink-0 overflow-hidden`}
-        style={{ width: cellW, height: cellH, padding: 2, fontSize }}
+        style={{ width: cellW, height: cellH, padding: '3px 4px', fontSize }}
       >
         {needsShift && (
           <div className="absolute top-0 left-0 bg-amber-500 text-slate-900 px-0.5 font-black leading-none rounded-br z-10"
@@ -1104,25 +1116,25 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
             ⬆{needsShift}
           </div>
         )}
-        <div className="text-left mono leading-tight w-full">
-          {/* 1줄: POL/POD */}
-          <div className="font-bold truncate" style={{ fontSize: fontSize - 1 }}>
-            {polLabel}/{transit && transit.slice(0,3)}<span className={ptk ? 'text-red-700 font-black' : ''}>*{podLabel}</span>
+        <div className="text-left mono leading-tight w-full" style={{ whiteSpace: 'pre', fontFamily: 'Consolas, "Courier New", monospace' }}>
+          {/* 1줄: POL/  *POD - 공백 유지 */}
+          <div className="font-bold" style={{ fontSize: fontSize - 1 }}>
+            {polLabel}/{transit ? transit : '   '}<span className={ptk ? 'text-red-700 font-black' : ''}>*{podLabel}</span>
           </div>
           {/* 2줄: 컨번호 */}
-          <div className="font-black truncate" style={{ fontSize }}>
-            {isMobile ? (c.cn || '').slice(-7) : c.cn}
+          <div className="font-black" style={{ fontSize }}>
+            {c.cn || ''}
           </div>
           {/* 3줄: 선사 F/E 무게 타입 */}
-          <div className="truncate opacity-90" style={{ fontSize: fontSize - 1 }}>
-            {(c.op || '').slice(0,3)} {fe} {wt} {typeLabel}
+          <div style={{ fontSize: fontSize - 1 }}>
+            {opLabel} {fe}{wtPadded} {typeLabel}
           </div>
-          {/* 4줄: 특수 정보 (DG/리퍼온도/FR/TK/OOG) - 없으면 빈 줄 */}
-          <div className={`truncate ${specialColor}`} style={{ fontSize: fontSize - 1, minHeight: fontSize }}>
+          {/* 4줄: 특수 정보 */}
+          <div className={specialColor} style={{ fontSize: fontSize - 1, minHeight: fontSize }}>
             {specialLine || '\u00A0'}
           </div>
-          {/* 5줄: 위치 (....BAYROWTIER) */}
-          <div className="truncate text-slate-600" style={{ fontSize: fontSize - 2 }}>
+          {/* 5줄: 위치 */}
+          <div className="text-slate-600" style={{ fontSize: fontSize - 1 }}>
             {posStr}
           </div>
         </div>
