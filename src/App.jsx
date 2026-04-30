@@ -715,7 +715,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     </div>
   );
 }
-function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn }) {
+function Legend({ color, label }) { return <div className="flex items-center gap-1"><span className={`w-3 h-3 rounded ${color}`}></span><span className="text-slate-300">{label}</span></div>; }function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelectedCn }) {
   return <div className="space-y-3">
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
       <div className="relative">
