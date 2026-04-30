@@ -510,6 +510,19 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     return g;
   }, [ediContainers]);
   
+  // 모든 베이의 가장 큰 좌현/우현 ROW 번호 (전체 통일 폭)
+  const globalRowRange = useMemo(() => {
+    let maxLeft = 0, maxRight = 0;
+    for (const c of ediContainers) {
+      if (!c.row) continue;
+      const n = parseInt(c.row);
+      if (n === 0) continue;
+      if (n % 2 === 0) maxLeft = Math.max(maxLeft, n);
+      else maxRight = Math.max(maxRight, n);
+    }
+    return { maxLeft, maxRight };
+  }, [ediContainers]);
+  
   // 페이지 = 짝수/홀수 베이 한 쌍 (PDF 처럼)
   const pages = useMemo(() => {
     const bays = Object.keys(bayGroups).sort();
@@ -776,6 +789,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
                 cellW={cellW} cellH={cellH} fontSize={fontSize}
                 isMobile={isMobile}
                 cellColor={cellColor}
+                globalRowRange={globalRowRange}
               />
             ))}
           </div>
@@ -793,6 +807,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
             cellW={cellW} cellH={cellH} fontSize={fontSize}
             isMobile={isMobile}
             cellColor={cellColor}
+            globalRowRange={globalRowRange}
           />
         )}
       </div>
@@ -808,8 +823,8 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
 }
 
 // === 베이 한 페이지 (DECK + 해치커버 + HOLD) ===
-// === 베이 한 페이지 — 5:5 비율 + X 표시 ===
-function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor }) {
+// === 베이 한 페이지 — 5:5 비율 + X 표시 + 전체 베이 가운데 정렬 ===
+function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor, globalRowRange }) {
   // 짝수 베이 컨 (40피트)
   const evenContainers = page.evenBay ? (bayGroups[page.evenBay] || []) : [];
   // 홀수 베이 컨 (20피트)
@@ -857,23 +872,25 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
     ...Array.from(xMarks).map(k => k.split('-')[0])
   ]);
   
-  // 좌우 5:5 균형
-  const leftRows = allRowsRaw.filter(r => parseInt(r) % 2 === 0 && parseInt(r) !== 0);
-  const rightRows = allRowsRaw.filter(r => parseInt(r) % 2 === 1);
+  // 좌우 5:5 균형 — 모든 베이 통일 폭 (00 이 전체에서 같은 위치)
+  const maxLeft = globalRowRange?.maxLeft || 0;
+  const maxRight = globalRowRange?.maxRight || 0;
   
-  // 00 은 가운데 기준점으로 항상 표시 (없어도 빈 칸으로)
+  // 모든 짝수 ROW (좌현): maxLeft, maxLeft-2, ..., 04, 02
+  const allLeftRows = [];
+  for (let n = maxLeft; n >= 2; n -= 2) {
+    allLeftRows.push(String(n).padStart(2, '0'));
+  }
+  // 모든 홀수 ROW (우현): 01, 03, ..., maxRight
+  const allRightRows = [];
+  for (let n = 1; n <= maxRight; n += 2) {
+    allRightRows.push(String(n).padStart(2, '0'));
+  }
+  
+  // 00 은 가운데 (항상 표시)
   const centerRows = ['00'];
   
-  const sideMax = Math.max(leftRows.length, rightRows.length);
-  const leftPadded = [
-    ...Array(sideMax - leftRows.length).fill(null),
-    ...leftRows
-  ];
-  const rightPadded = [
-    ...rightRows,
-    ...Array(sideMax - rightRows.length).fill(null)
-  ];
-  const allRows = [...leftPadded, ...centerRows, ...rightPadded];
+  const allRows = [...allLeftRows, ...centerRows, ...allRightRows];
   
   // DECK / HOLD 분리
   const allTiers = Array.from(new Set([
