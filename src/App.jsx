@@ -1576,17 +1576,32 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     </div>
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
       <div className="font-bold text-blue-200 text-sm">1. 양하 자료 (ASC / EDI / TXT 자동 인식)</div>
-      <input ref={ediRef} type="file" accept=".edi,.EDI,.txt,.TXT,.asc,.ASC" onChange={e => handleEdi(e.target.files?.[0])} className="block w-full text-xs text-slate-300 mono file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-blue-500 file:text-slate-900 cursor-pointer"/>
+      <input ref={ediRef} type="file" accept="*/*" onChange={e => handleEdi(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <button onClick={() => ediRef.current?.click()}
+        className="w-full py-3 px-4 bg-blue-500 hover:bg-blue-400 active:bg-blue-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+        <Upload className="w-5 h-5"/>
+        파일 선택 (ASC / EDI / TXT)
+      </button>
       {ediStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${ediStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : ediStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{ediStatus.msg}</div>}
     </div>
     {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
       <div className="font-bold text-amber-200 text-sm">2. 양하 리스트 (Excel)</div>
-      <input ref={dischargeRef} type="file" accept=".xlsx,.xls,.XLSX,.XLS,.csv,.CSV" onChange={e => handleDischarge(e.target.files?.[0])} className="block w-full text-xs text-slate-300 mono file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-amber-500 file:text-slate-900 cursor-pointer"/>
+      <input ref={dischargeRef} type="file" accept="*/*" onChange={e => handleDischarge(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <button onClick={() => dischargeRef.current?.click()}
+        className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+        <Upload className="w-5 h-5"/>
+        파일 선택 (Excel / CSV)
+      </button>
       {dischargeStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${dischargeStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : dischargeStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{dischargeStatus.msg}</div>}
     </div>}
     {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
       <div className="font-bold text-red-200 text-sm">3. X-RAY 리스트 (Excel)</div>
-      <input ref={xrayRef} type="file" accept=".xlsx,.xls,.XLSX,.XLS,.csv,.CSV" onChange={e => handleXray(e.target.files?.[0])} className="block w-full text-xs text-slate-300 mono file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-red-500 file:text-slate-900 cursor-pointer"/>
+      <input ref={xrayRef} type="file" accept="*/*" onChange={e => handleXray(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <button onClick={() => xrayRef.current?.click()}
+        className="w-full py-3 px-4 bg-red-500 hover:bg-red-400 active:bg-red-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+        <Upload className="w-5 h-5"/>
+        파일 선택 (Excel / CSV)
+      </button>
       {xrayStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${xrayStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : xrayStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{xrayStatus.msg}</div>}
     </div>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
