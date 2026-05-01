@@ -142,6 +142,19 @@ export function parseBAPLIE(ediText) {
     }
   }
   if (cur) result.containers.push(cur);
+  
+  // 무게 기반 F/E 검증 (실제 작업자 경험)
+  // 20피트 Empty ≈ 2.2톤, 40피트 Empty ≈ 3.8톤
+  for (const c of result.containers) {
+    if (c.wt > 0) {
+      const is20 = c.iso && c.iso.startsWith('22');
+      const is40 = c.iso && (c.iso.startsWith('42') || c.iso.startsWith('44') || c.iso.startsWith('45'));
+      if (is20 && c.wt <= 2500) c.fe = 'E';
+      else if (is40 && c.wt <= 4500) c.fe = 'E';
+      else if (c.wt > 5000) c.fe = 'F';
+    }
+  }
+  
   if (!result.vsl) result.errors.push('선박명을 인식하지 못했습니다.');
   if (result.containers.length === 0) result.errors.push('컨테이너를 찾지 못했습니다.');
   return result;
@@ -195,8 +208,24 @@ export function parseAscFile(text) {
     let pol = 'KRINC', pod = '';
     if (polPod) { pol = polPod[1]; pod = polPod[2]; }
     
+    // 무게 기반 F/E 검증 (실제 작업자 경험)
+    // 20피트 Empty ≈ 2.2톤, 40피트 Empty ≈ 3.8톤
+    // 무게가 임계값보다 낮으면 Empty 로 판정 (덮어쓰기)
+    let feFinal = fe;
+    if (wt > 0) {
+      const is20 = tp && (tp.endsWith('20') || tp === 'DC20' || tp === 'RF20' || tp === 'TK20');
+      const is40 = tp && (tp.endsWith('40') || tp === 'DC40' || tp === 'RF40' || tp === 'HC40');
+      // 20피트: 2.5톤 이하 = Empty / 40피트: 4.5톤 이하 = Empty
+      if (is20 && wt <= 2500) feFinal = 'E';
+      else if (is40 && wt <= 4500) feFinal = 'E';
+      // 무게 충분히 무거우면 Full 확정
+      else if (wt > 5000) feFinal = 'F';
+    }
+    
     containers.push({
-      cn, bay, row, tier, iso, tp, fe, wt, op, pol, pod,
+      cn, bay, row, tier, iso, tp, 
+      fe: feFinal, 
+      wt, op, pol, pod,
       dg: false, dgc: '', un: '',
       rf: tp.startsWith('RF'),
       tk: tp.startsWith('TK'),
@@ -236,6 +265,7 @@ export async function parseListExcel(arrayBuffer) {
       const row = (grid[i] || []).map(s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' '));
       const hasCN = row.some(c => 
         /^container$/.test(c) || /container.*no/.test(c) || /cntr.*no/.test(c) || /^cntr$/.test(c)
+        || /컨테이너.*번호/.test(c) || /^컨테이너$/.test(c)
       );
       if (hasCN) { headerRow = i; headers = (grid[i] || []).map(s => String(s || '').trim()); break; }
     }
@@ -262,14 +292,20 @@ export async function parseListExcel(arrayBuffer) {
       return -1;
     };
     
-    const cn_i = findCol([/^container$/, /container.*no/, /cntr.*no/, /^cntr$/]);
-    const sl_i = findCol([/^seal$/, /^seal\s*no$/, /^sealno$/, /seal.*no(?!\d)/]);
-    const bl_i = findCol([/^b\/?l/, /^bl\s*no/]);
-    const wt_i = findCol([/gross.*wt|t\.wgt|total.*wt|^weight/]);
-    const sh_i = findCol([/shipper|forward/]);
-    const gi_i = findCol([/gate.*in/]);
-    const pol_i = findCol([/^pol$|load.*port/]);
-    const pod_i = findCol([/^pod$|dis.*port|dis.*cy/]);
+    // 영문 + 한글 컬럼 인식
+    const cn_i = findCol([/^container$/, /container.*no/, /cntr.*no/, /^cntr$/, /컨테이너.*번호/, /^컨테이너$/]);
+    const sl_i = findCol([/^seal$/, /^seal\s*no$/, /^sealno$/, /seal.*no(?!\d)/, /seal.*no.*1/, /^실번호/]);
+    const bl_i = findCol([/^b\/?l/, /^bl\s*no/, /^m-?b\/?l/, /master.*b\/?l/]);
+    const wt_i = findCol([/gross.*wt|t\.wgt|total.*wt|^weight/, /무게/, /중량/]);
+    const sh_i = findCol([/shipper|forward/, /화주/]);
+    const gi_i = findCol([/gate.*in/, /반입/]);
+    const pol_i = findCol([/^pol$|load.*port/, /적재항/, /선적항/]);
+    const pod_i = findCol([/^pod$|dis.*port|dis.*cy/, /최종항/, /양하항/, /도착항/]);
+    const fe_i = findCol([/^f\/?e$|^full\/?empty$|^fe$/, /^적공$/]);
+    const type_i = findCol([/^type$|^cntr.*type|^iso/, /^규격$/, /^타입$/, /^컨.*규격/]);
+    const op_i = findCol([/^op$|^operator|^carrier|^line/, /^선사/, /선사부호/]);
+    const dg_i = findCol([/^dg$|hazmat|imdg/, /위험물/]);
+    const tmp_i = findCol([/^temp|^temperature|^reefer/, /온도/, /냉장/]);
     
     if (cn_i < 0) continue;
     
@@ -279,6 +315,33 @@ export async function parseListExcel(arrayBuffer) {
       if (!/^[A-Z]{4}\d{6,7}$/.test(cn)) continue;
       if (seen.has(cn)) continue;
       seen.add(cn);
+      
+      // F/E 추출 (있으면)
+      let fe = '';
+      if (fe_i >= 0) {
+        const feRaw = String(row[fe_i] || '').trim().toUpperCase();
+        if (feRaw === 'F' || feRaw === 'FULL' || feRaw === 'L' || feRaw === 'LOADED') fe = 'F';
+        else if (feRaw === 'E' || feRaw === 'EMPTY' || feRaw === 'MT') fe = 'E';
+      }
+      
+      // 타입 추출
+      let iso = '';
+      let isoRaw = type_i >= 0 ? String(row[type_i] || '').trim().toUpperCase() : '';
+      // 표준 ISO 코드 (22GP, 42GP, 45GP, 22R5 등)
+      if (/^\d{2}[A-Z]\d$|^\d{2}[A-Z]{2}$/.test(isoRaw)) iso = isoRaw;
+      // 단순 표기 (20DC, 40HC 등)
+      else if (/20.*DC|20.*GP/.test(isoRaw)) iso = '22GP';
+      else if (/40.*HC/.test(isoRaw)) iso = '45GP';
+      else if (/40.*DC|40.*GP/.test(isoRaw)) iso = '42GP';
+      else if (/RF|REEFER/.test(isoRaw)) iso = isoRaw.includes('20') ? '22R5' : '45R1';
+      else if (/TK|TANK/.test(isoRaw)) iso = '22T6';
+      
+      const dgVal = dg_i >= 0 ? String(row[dg_i] || '').trim() : '';
+      const isDg = dgVal && /^(Y|YES|TRUE|1|DG|HAZ)/i.test(dgVal);
+      
+      const tmpVal = tmp_i >= 0 ? String(row[tmp_i] || '').trim() : '';
+      const isRf = tmpVal && tmpVal !== '0' && tmpVal !== '-';
+      
       records.push({
         cn, l4: cn.slice(-4),
         sl: sl_i >= 0 ? String(row[sl_i] || '').trim() : '',
@@ -288,6 +351,12 @@ export async function parseListExcel(arrayBuffer) {
         wt: wt_i >= 0 ? (parseInt(String(row[wt_i] || '').replace(/,/g, '')) || 0) : 0,
         pol: pol_i >= 0 ? String(row[pol_i] || '').trim() : '',
         pod: pod_i >= 0 ? String(row[pod_i] || '').trim() : '',
+        fe, // 리스트에서 직접 가져온 F/E (있으면)
+        iso, // 리스트에서 직접 가져온 타입 (있으면)
+        op: op_i >= 0 ? String(row[op_i] || '').trim() : '',
+        dg: isDg,
+        rf: isRf,
+        tmp: tmpVal,
       });
     }
   }

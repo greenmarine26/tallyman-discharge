@@ -103,10 +103,71 @@ export default function App() {
     for (const c of ediContainers) ediByCn[c.cn] = c;
     return dischargeRecords.map(r => {
       const edi = ediByCn[r.cn];
-      if (edi) return { ...edi, sl: r.sl || edi.sl, bl: r.bl || edi.bl, wt: r.wt || edi.wt, _matched: true };
+      if (edi) {
+        // 리스트의 F/E, ISO, OP 가 있으면 리스트 우선 (리스트가 더 최신)
+        return { 
+          ...edi, 
+          sl: r.sl || edi.sl, 
+          bl: r.bl || edi.bl, 
+          wt: r.wt || edi.wt,
+          fe: r.fe || edi.fe,
+          iso: r.iso || edi.iso,
+          op: r.op || edi.op,
+          rf: r.rf || edi.rf,
+          dg: r.dg || edi.dg,
+          tmp: r.tmp || edi.tmp,
+          pol: r.pol || edi.pol,
+          pod: r.pod || edi.pod,
+          _matched: true 
+        };
+      }
       return { ...r, _matched: false };
     });
   }, [dischargeRecords, ediContainers]);
+  
+  // EDI/ASC 의 컨테이너 정보도 리스트의 F/E 로 보정 (베이 화면용)
+  const ediContainersFinal = useMemo(() => {
+    if (dischargeRecords.length === 0) return ediContainers;
+    const recordByCn = {};
+    for (const r of dischargeRecords) recordByCn[r.cn] = r;
+    
+    // F/E 추론 함수 (실번호 + 무게 + 규격 기반)
+    const inferFE = (sl, wt, iso) => {
+      if (sl) return 'F'; // 실번호 있으면 F
+      if (!wt || wt === 0) return null; // 무게 없으면 추론 불가
+      const isoCheck = (iso || '').toUpperCase();
+      const is20 = isoCheck.startsWith('22') || isoCheck.startsWith('20');
+      const isReefer = /R[E51]/i.test(isoCheck);
+      const threshold = isReefer ? 6000 : (is20 ? 3000 : 5000);
+      return wt >= threshold ? 'F' : 'E';
+    };
+    
+    return ediContainers.map(c => {
+      const r = recordByCn[c.cn];
+      if (!r) return c;
+      
+      // 리스트에 있는 컨이면 - 정보 합쳐서 F/E 추론
+      const sl = r.sl || c.sl || '';
+      const wt = r.wt || c.wt || 0;
+      const iso = r.iso || c.iso || '';
+      const fe = r.fe || inferFE(sl, wt, iso) || c.fe || 'F';
+      
+      return {
+        ...c,
+        fe,
+        iso: r.iso || c.iso,
+        op: r.op || c.op,
+        wt: wt,
+        sl: sl,
+        bl: r.bl || c.bl,
+        rf: r.rf || c.rf,
+        dg: r.dg || c.dg,
+        tmp: r.tmp || c.tmp,
+        pol: r.pol || c.pol,
+        pod: r.pod || c.pod,
+      };
+    });
+  }, [ediContainers, dischargeRecords]);
   
   const searchResults = useMemo(() => {
     if (!query || query.length < 2) return [];
@@ -290,7 +351,7 @@ export default function App() {
           </div>
         )}
         {current && tab === 'list' && <DischargeListTab list={dischargeList} setSelectedCn={setSelectedCn} xrayList={xrayList} completedMap={completedMap} toggleXray={toggleXray}/>}
-        {current && tab === 'bay' && <BayTab ediContainers={ediContainers} dischargeCns={dischargeCns} xrayList={xrayList} setSelectedCn={setSelectedCn} completedMap={completedMap}/>}
+        {current && tab === 'bay' && <BayTab ediContainers={ediContainersFinal} dischargeCns={dischargeCns} xrayList={xrayList} setSelectedCn={setSelectedCn} completedMap={completedMap}/>}
         {tab === 'search' && <SearchTab query={query} setQuery={setQuery} results={searchResults} xrayList={xrayList} dischargeCns={dischargeCns} setSelectedCn={setSelectedCn} vsl={current?.vsl}/>}
         {tab === 'voyage' && <VoyageTab voyages={voyagesAll} activeKey={activeKey} setActiveKey={saveActive} addVoyage={addVoyage} deleteVoyage={deleteVoyage} applyDischargeList={applyDischargeList} addXrayBulk={(cnList) => fbAddXrayBulk(activeKey, cnList)}/>}
       </main>
@@ -1591,28 +1652,44 @@ function VoyageStatsBox({ voyage }) {
   }, [containers, sources]);
   
   // 양하리스트 ↔ EDI/ASC 비교 (선사별)
+  // 양방향 체크: 리스트 컨이 EDI 에 없거나, EDI 의 양하 대상이 리스트에 없거나
   const listValidation = useMemo(() => {
     if (records.length === 0) return null;
     
     const ediCns = new Set(containers.map(c => c.cn));
-    const result = {
-      total: records.length,
-      matched: 0,        // EDI 에도 있음
-      missing: [],       // EDI 에 없음 (선사별 그룹)
-      missingByCarrier: {},
-    };
+    const listCns = new Set(records.map(r => r.cn));
     
+    // 리스트의 컨이 EDI 에 없는 경우 (선사별 ASC 필요)
+    const missingInEdi = [];
+    const missingByCarrier = {};
     for (const r of records) {
-      if (ediCns.has(r.cn)) {
-        result.matched++;
-      } else {
+      if (!ediCns.has(r.cn)) {
+        missingInEdi.push(r);
         const carrier = r.op || r.carrier || 'UNKNOWN';
-        if (!result.missingByCarrier[carrier]) result.missingByCarrier[carrier] = 0;
-        result.missingByCarrier[carrier]++;
-        result.missing.push(r);
+        missingByCarrier[carrier] = (missingByCarrier[carrier] || 0) + 1;
       }
     }
-    return result;
+    
+    // EDI 의 양하/선적 대상이 리스트에 없는 경우 (리스트 누락)
+    // 양하: POD = PTK / 선적: POL = PTK
+    const isPtk = (c) => {
+      const pod = (c.pod || '').toUpperCase();
+      const pol = (c.pol || '').toUpperCase();
+      return pod.endsWith('PTK') || pol.endsWith('PTK');
+    };
+    const ptkInEdi = containers.filter(isPtk);
+    const ptkMissingInList = ptkInEdi.filter(c => !listCns.has(c.cn));
+    
+    return {
+      total: records.length,
+      ediTotal: containers.length,
+      ptkInEdi: ptkInEdi.length,
+      matched: records.filter(r => ediCns.has(r.cn)).length,
+      missingInEdi: missingInEdi.length,
+      missingByCarrier,
+      ptkMissingInList: ptkMissingInList.length,
+      ptkMissingDetails: ptkMissingInList.slice(0, 10),
+    };
   }, [containers, records]);
   
   // 화물 종류별 통계
@@ -1669,22 +1746,39 @@ function VoyageStatsBox({ voyage }) {
       
       {/* 양하리스트 검증 */}
       {listValidation && (
-        <div className={`rounded-lg p-3 border ${listValidation.missing.length === 0 ? 'bg-emerald-900/30 border-emerald-700' : 'bg-red-900/30 border-red-700'}`}>
+        <div className={`rounded-lg p-3 border ${listValidation.missingInEdi === 0 && listValidation.ptkMissingInList === 0 ? 'bg-emerald-900/30 border-emerald-700' : 'bg-red-900/30 border-red-700'}`}>
           <div className="text-xs font-bold mb-1">
-            {listValidation.missing.length === 0
-              ? <span className="text-emerald-300">✅ 양하리스트 ↔ EDI/ASC 일치 ({listValidation.matched}대)</span>
-              : <span className="text-red-300">⚠ 양하리스트 컨테이너 누락 발견</span>}
+            {listValidation.missingInEdi === 0 && listValidation.ptkMissingInList === 0
+              ? <span className="text-emerald-300">✅ 리스트 ↔ EDI/ASC 일치 ({listValidation.matched}대)</span>
+              : <span className="text-red-300">⚠ {listValidation.missingInEdi + listValidation.ptkMissingInList}대 차이 발견</span>}
           </div>
-          {listValidation.missing.length > 0 && (
-            <div className="text-[11px] mono space-y-0.5">
-              <div className="text-red-200">매칭: {listValidation.matched}/{listValidation.total}대</div>
-              <div className="text-red-300 font-bold mt-1">선사별 누락:</div>
-              {Object.entries(listValidation.missingByCarrier).map(([c, n]) => (
-                <div key={c} className="text-orange-200">• {c}: {n}대 부족</div>
-              ))}
-              <div className="text-[10px] text-red-300/70 mt-1">→ 해당 선사 ASC/EDI 추가 업로드 필요</div>
+          
+          <div className="text-[11px] mono space-y-0.5">
+            <div className="text-slate-300">
+              EDI/ASC: <span className="font-bold text-blue-300">{listValidation.ediTotal}</span>대 · 
+              리스트: <span className="font-bold text-amber-300">{listValidation.total}</span>대 · 
+              매칭: <span className="font-bold text-emerald-300">{listValidation.matched}</span>대
             </div>
-          )}
+            
+            {listValidation.missingInEdi > 0 && (
+              <div className="mt-2 pt-2 border-t border-red-800">
+                <div className="text-red-300 font-bold">📋 리스트에 있는데 EDI/ASC 에 없음: {listValidation.missingInEdi}대</div>
+                {Object.entries(listValidation.missingByCarrier).map(([c, n]) => (
+                  <div key={c} className="text-orange-200 ml-2">• {c}: {n}대 (해당 선사 ASC 추가 필요)</div>
+                ))}
+              </div>
+            )}
+            
+            {listValidation.ptkMissingInList > 0 && (
+              <div className="mt-2 pt-2 border-t border-red-800">
+                <div className="text-red-300 font-bold">🚢 EDI/ASC 에 평택 대상 있는데 리스트에 없음: {listValidation.ptkMissingInList}대</div>
+                {listValidation.ptkMissingDetails.map((c, i) => (
+                  <div key={i} className="text-orange-200 ml-2 text-[10px]">• {c.cn} ({c.op || '?'}) {c.bay ? `${c.bay}-${c.row}-${c.tier}` : ''}</div>
+                ))}
+                {listValidation.ptkMissingInList > 10 && <div className="text-[10px] text-red-300/70 ml-2">... 외 {listValidation.ptkMissingInList - 10}대</div>}
+              </div>
+            )}
+          </div>
         </div>
       )}
       
@@ -1758,57 +1852,112 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
   const [xrayStatus, setXrayStatus] = useState(null);
   const ediRef = useRef(null); const dischargeRef = useRef(null); const xrayRef = useRef(null);
   
-  const handleEdi = async (file) => {
-    if (!file) return;
-    setEdiStatus({ loading: true, msg: `파싱 중: ${file.name}` });
-    try {
-      const text = await file.text();
-      // ASC 자동 감지 ($604 헤더)
-      let r;
-      let fileType = 'EDI';
-      if (text.startsWith('$604') || text.substring(0, 200).includes('$604')) {
-        r = parseAscFile(text);
-        fileType = 'ASC';
-      } else {
-        r = parseBAPLIE(text);
+  const handleEdi = async (filesOrFile) => {
+    const files = filesOrFile instanceof FileList 
+      ? Array.from(filesOrFile)
+      : (filesOrFile ? [filesOrFile] : []);
+    if (files.length === 0) return;
+    
+    setEdiStatus({ loading: true, msg: `${files.length}개 파일 처리 중...` });
+    
+    const results = [];
+    let totalAdded = 0;
+    let lastVoyageKey = null;
+    
+    for (let idx = 0; idx < files.length; idx++) {
+      const file = files[idx];
+      try {
+        setEdiStatus({ loading: true, msg: `[${idx + 1}/${files.length}] ${file.name} 파싱 중...` });
+        const text = await file.text();
+        let r;
+        let fileType = 'EDI';
+        if (text.startsWith('$604') || text.substring(0, 200).includes('$604')) {
+          r = parseAscFile(text);
+          fileType = 'ASC';
+        } else {
+          r = parseBAPLIE(text);
+        }
+        if (r.containers.length === 0) {
+          results.push(`❌ ${file.name}: 컨테이너 없음`);
+          continue;
+        }
+        const result = await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '', fileType);
+        if (result) {
+          totalAdded += result.added;
+          lastVoyageKey = result.key;
+          results.push(`✅ [${fileType}] ${r.vsl} ${r.voy}: +${result.added}대`);
+        }
+      } catch (e) {
+        results.push(`❌ ${file.name}: ${e.message}`);
       }
-      if (r.containers.length === 0) { setEdiStatus({ ok: false, msg: `${fileType} 컨테이너 없음` }); return; }
-      const result = await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '', fileType);
-      if (result) {
-        const msg = result.total > result.added 
-          ? `[${fileType}] ${r.vsl} ${r.voy} — 추가 ${result.added}대 (전체 ${result.total}대)`
-          : `[${fileType}] ${r.vsl} ${r.voy} — ${result.added}대 등록`;
-        setEdiStatus({ ok: true, msg });
-      }
-    } catch (e) { setEdiStatus({ ok: false, msg: '실패: ' + e.message }); }
+    }
+    
+    setEdiStatus({ 
+      ok: true, 
+      msg: `${files.length}개 파일 완료 (총 +${totalAdded}대)\n${results.join('\n')}`
+    });
+    
     if (ediRef.current) ediRef.current.value = '';
   };
-  const handleDischarge = async (file) => {
-    if (!file || !activeKey) return;
-    setDischargeStatus({ loading: true, msg: `파싱 중: ${file.name}` });
-    try {
-      const buf = await file.arrayBuffer();
-      const { records } = await parseListExcel(buf);
-      if (records.length === 0) { setDischargeStatus({ ok: false, msg: '없음' }); return; }
-      const result = await applyDischargeList(activeKey, records);
-      if (result) {
-        const msg = result.total > result.added
-          ? `+${result.added}대 (전체 양하 ${result.total}대)`
-          : `${result.added}대 양하 등록`;
-        setDischargeStatus({ ok: true, msg });
+  
+  const handleDischarge = async (filesOrFile) => {
+    if (!activeKey) return;
+    const files = filesOrFile instanceof FileList 
+      ? Array.from(filesOrFile)
+      : (filesOrFile ? [filesOrFile] : []);
+    if (files.length === 0) return;
+    
+    setDischargeStatus({ loading: true, msg: `${files.length}개 파일 처리 중...` });
+    
+    const results = [];
+    let totalAdded = 0;
+    
+    for (let idx = 0; idx < files.length; idx++) {
+      const file = files[idx];
+      try {
+        setDischargeStatus({ loading: true, msg: `[${idx + 1}/${files.length}] ${file.name}` });
+        const buf = await file.arrayBuffer();
+        const { records } = await parseListExcel(buf);
+        if (records.length === 0) {
+          results.push(`❌ ${file.name}: 데이터 없음`);
+          continue;
+        }
+        const result = await applyDischargeList(activeKey, records);
+        if (result) {
+          totalAdded += result.added;
+          results.push(`✅ ${file.name}: +${result.added}대`);
+        }
+      } catch (e) {
+        results.push(`❌ ${file.name}: ${e.message}`);
       }
-    } catch (e) { setDischargeStatus({ ok: false, msg: '실패: ' + e.message }); }
+    }
+    
+    setDischargeStatus({ 
+      ok: true, 
+      msg: `${files.length}개 파일 완료 (총 +${totalAdded}대)\n${results.join('\n')}`
+    });
+    
     if (dischargeRef.current) dischargeRef.current.value = '';
   };
-  const handleXray = async (file) => {
-    if (!file || !activeKey) return;
-    setXrayStatus({ loading: true, msg: `파싱 중: ${file.name}` });
-    try {
-      const buf = await file.arrayBuffer();
-      const { containers } = await parseXrayList(buf);
-      await addXrayBulk(containers);
-      setXrayStatus({ ok: true, msg: `${containers.length}개 X-RAY 추가` });
-    } catch (e) { setXrayStatus({ ok: false, msg: '실패: ' + e.message }); }
+  
+  const handleXray = async (filesOrFile) => {
+    if (!activeKey) return;
+    const files = filesOrFile instanceof FileList 
+      ? Array.from(filesOrFile)
+      : (filesOrFile ? [filesOrFile] : []);
+    if (files.length === 0) return;
+    
+    setXrayStatus({ loading: true, msg: `${files.length}개 파일 처리 중...` });
+    let total = 0;
+    for (const file of files) {
+      try {
+        const buf = await file.arrayBuffer();
+        const { containers } = await parseXrayList(buf);
+        await addXrayBulk(containers);
+        total += containers.length;
+      } catch (e) {}
+    }
+    setXrayStatus({ ok: true, msg: `${files.length}개 파일 완료 (총 ${total}개 X-RAY 등록)` });
     if (xrayRef.current) xrayRef.current.value = '';
   };
   
@@ -1823,34 +1972,34 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     {/* 활성 항차 통계 + 검증 */}
     {activeKey && voyages[activeKey] && <VoyageStatsBox voyage={voyages[activeKey]}/>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
-      <div className="font-bold text-blue-200 text-sm">1. 양하 자료 (ASC / EDI / TXT 자동 인식)</div>
-      <input ref={ediRef} type="file" accept="*/*" onChange={e => handleEdi(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <div className="font-bold text-blue-200 text-sm">1. 양하 자료 (ASC / EDI / TXT) — 여러 개 동시 선택</div>
+      <input ref={ediRef} type="file" multiple accept="*/*" onChange={e => handleEdi(e.target.files)} style={{ display: 'none' }}/>
       <button onClick={() => ediRef.current?.click()}
         className="w-full py-3 px-4 bg-blue-500 hover:bg-blue-400 active:bg-blue-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
         <Upload className="w-5 h-5"/>
-        파일 선택 (ASC / EDI / TXT)
+        파일 선택 (여러 개 가능)
       </button>
-      {ediStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${ediStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : ediStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{ediStatus.msg}</div>}
+      {ediStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${ediStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : ediStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{ediStatus.msg}</div>}
     </div>
     {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
-      <div className="font-bold text-amber-200 text-sm">2. 양하 리스트 (Excel)</div>
-      <input ref={dischargeRef} type="file" accept="*/*" onChange={e => handleDischarge(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <div className="font-bold text-amber-200 text-sm">2. 양하 리스트 (Excel) — 여러 개 동시 선택</div>
+      <input ref={dischargeRef} type="file" multiple accept="*/*" onChange={e => handleDischarge(e.target.files)} style={{ display: 'none' }}/>
       <button onClick={() => dischargeRef.current?.click()}
         className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
         <Upload className="w-5 h-5"/>
         파일 선택 (Excel / CSV)
       </button>
-      {dischargeStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${dischargeStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : dischargeStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{dischargeStatus.msg}</div>}
+      {dischargeStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${dischargeStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : dischargeStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{dischargeStatus.msg}</div>}
     </div>}
     {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
-      <div className="font-bold text-red-200 text-sm">3. X-RAY 리스트 (Excel)</div>
-      <input ref={xrayRef} type="file" accept="*/*" onChange={e => handleXray(e.target.files?.[0])} style={{ display: 'none' }}/>
+      <div className="font-bold text-red-200 text-sm">3. X-RAY 리스트 (Excel) — 여러 개 동시 선택</div>
+      <input ref={xrayRef} type="file" multiple accept="*/*" onChange={e => handleXray(e.target.files)} style={{ display: 'none' }}/>
       <button onClick={() => xrayRef.current?.click()}
         className="w-full py-3 px-4 bg-red-500 hover:bg-red-400 active:bg-red-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
         <Upload className="w-5 h-5"/>
         파일 선택 (Excel / CSV)
       </button>
-      {xrayStatus && <div className={`text-xs px-2 py-1.5 rounded mono ${xrayStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : xrayStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{xrayStatus.msg}</div>}
+      {xrayStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${xrayStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : xrayStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{xrayStatus.msg}</div>}
     </div>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
       <div className="font-bold text-sm mb-3">항차 목록 ({Object.keys(voyages).length}개) <span className="text-[10px] text-emerald-400">☁ Firebase</span></div>
