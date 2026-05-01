@@ -92,7 +92,8 @@ export function parseBAPLIE(ediText) {
       }
     } else if (cur && seg.startsWith('EQD+CN+')) {
       const parts = seg.split('+');
-      cur.cn = (parts[2] || '').trim();
+      // 컨번호의 공백/하이픈 제거 (예: "DWSU 2406569" → "DWSU2406569")
+      cur.cn = (parts[2] || '').replace(/[\s\-]/g, '').toUpperCase().trim();
       cur.l4 = cur.cn.slice(-4);
       const isoField = parts[3] || '';
       cur.iso = isoField.split(':')[0] || '';
@@ -260,24 +261,77 @@ export async function parseListExcel(arrayBuffer) {
     const ws = wb.Sheets[sheetName];
     const grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
     
+    // 1단계: 헤더 행 찾기 (검색 범위 확대 50줄)
     let headerRow = -1, headers = null;
-    for (let i = 0; i < Math.min(30, grid.length); i++) {
+    for (let i = 0; i < Math.min(50, grid.length); i++) {
       const row = (grid[i] || []).map(s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' '));
       const hasCN = row.some(c => 
         /^container$/.test(c) || /container.*no/.test(c) || /cntr.*no/.test(c) || /^cntr$/.test(c)
         || /컨테이너.*번호/.test(c) || /^컨테이너$/.test(c)
+        || /^c\/?no$/.test(c) || /^cont.*no$/.test(c) || /^cnt.*no$/.test(c)
       );
       if (hasCN) { headerRow = i; headers = (grid[i] || []).map(s => String(s || '').trim()); break; }
     }
     
+    // 2단계: 헤더 못 찾으면 → 모든 셀에서 컨번호 패턴 스캔 (CLL 파일 fallback)
     if (headerRow < 0) {
       for (const row of grid) {
-        for (const cell of (row || [])) {
-          const text = String(cell || '').replace(/[\s\-]/g, '').toUpperCase();
-          const m = text.match(/^([A-Z]{4}\d{6,7})$/);
+        if (!row) continue;
+        // 한 행에서 컨번호 + 그 옆 셀들에서 추가 정보
+        for (let ci = 0; ci < row.length; ci++) {
+          const cellRaw = String(row[ci] || '');
+          const cell = cellRaw.replace(/[\s\-]/g, '').toUpperCase();
+          const m = cell.match(/^([A-Z]{4}\d{6,7})$/);
           if (m && !seen.has(m[1])) {
             seen.add(m[1]);
-            records.push({ cn: m[1], l4: m[1].slice(-4) });
+            const cn = m[1];
+            
+            // 같은 행에서 추가 정보 자동 추출
+            const allCells = row.map(v => String(v || '').trim());
+            
+            // 실번호: 컨번호 옆 (보통 다음 1~3 컬럼 안에 있음)
+            let sl = '';
+            for (let j = ci + 1; j < Math.min(ci + 5, allCells.length); j++) {
+              const v = allCells[j];
+              // 실번호 패턴: 영문+숫자 또는 순수 숫자 5자리 이상
+              if (/^[A-Z]{0,5}\d{5,}$/i.test(v.replace(/[\s\-]/g, ''))) {
+                sl = v.replace(/[\s\-]/g, '').toUpperCase();
+                break;
+              }
+            }
+            
+            // 무게: 1000 이상의 숫자
+            let wt = 0;
+            for (const v of allCells) {
+              const n = parseInt(String(v).replace(/[,\s]/g, ''));
+              if (!isNaN(n) && n >= 1000 && n <= 50000) {
+                wt = n;
+                break;
+              }
+            }
+            
+            // ISO 코드: 22GP, 42GP, 45GP, 22R5 등
+            let iso = '';
+            for (const v of allCells) {
+              const t = String(v).trim().toUpperCase();
+              if (/^\d{2}[A-Z]\d$|^\d{2}[A-Z]{2}$/.test(t)) {
+                iso = t;
+                break;
+              }
+            }
+            
+            // POL/POD: 5자리 영문 (KRPTK, CNJIU 등)
+            let pol = '', pod = '';
+            for (const v of allCells) {
+              const p = String(v).trim().toUpperCase();
+              if (/^[A-Z]{5}$/.test(p) && p !== cn.slice(0,4)) {
+                if (!pol) pol = p;
+                else if (!pod && p !== pol) { pod = p; break; }
+              }
+            }
+            
+            records.push({ cn, l4: cn.slice(-4), sl, wt, iso, pol, pod, op: '', bl: '', sh: '', gi: '', fe: '', dg: false, rf: false, tmp: '' });
+            break; // 한 행에서 컨번호 1개만 (중복 방지)
           }
         }
       }
@@ -292,17 +346,17 @@ export async function parseListExcel(arrayBuffer) {
       return -1;
     };
     
-    // 영문 + 한글 컬럼 인식
-    const cn_i = findCol([/^container$/, /container.*no/, /cntr.*no/, /^cntr$/, /컨테이너.*번호/, /^컨테이너$/]);
-    const sl_i = findCol([/^seal$/, /^seal\s*no$/, /^sealno$/, /seal.*no(?!\d)/, /seal.*no.*1/, /^실번호/]);
+    // 영문 + 한글 컬럼 인식 (확장)
+    const cn_i = findCol([/^container$/, /container.*no/, /cntr.*no/, /^cntr$/, /컨테이너.*번호/, /^컨테이너$/, /^c\/?no$/, /^cnt.*no$/]);
+    const sl_i = findCol([/^seal$/, /^seal\s*no$/, /^sealno$/, /seal.*no(?!\d)/, /seal.*no.*1/, /^실번호/, /^실$/]);
     const bl_i = findCol([/^b\/?l/, /^bl\s*no/, /^m-?b\/?l/, /master.*b\/?l/]);
-    const wt_i = findCol([/gross.*wt|t\.wgt|total.*wt|^weight/, /무게/, /중량/]);
+    const wt_i = findCol([/gross.*wt|t\.wgt|total.*wt|^weight/, /무게/, /중량/, /^kg/, /^kgs/]);
     const sh_i = findCol([/shipper|forward/, /화주/]);
     const gi_i = findCol([/gate.*in/, /반입/]);
-    const pol_i = findCol([/^pol$|load.*port/, /적재항/, /선적항/]);
-    const pod_i = findCol([/^pod$|dis.*port|dis.*cy/, /최종항/, /양하항/, /도착항/]);
-    const fe_i = findCol([/^f\/?e$|^full\/?empty$|^fe$/, /^적공$/]);
-    const type_i = findCol([/^type$|^cntr.*type|^iso/, /^규격$/, /^타입$/, /^컨.*규격/]);
+    const pol_i = findCol([/^pol$|load.*port/, /적재항/, /선적항/, /^lp$/]);
+    const pod_i = findCol([/^pod$|dis.*port|dis.*cy/, /최종항/, /양하항/, /도착항/, /^dp$/]);
+    const fe_i = findCol([/^f\/?e$|^full\/?empty$|^fe$/, /^적공$/, /^empty\/full$/]);
+    const type_i = findCol([/^type$|^cntr.*type|^iso/, /^규격$/, /^타입$/, /^컨.*규격/, /^size$/]);
     const op_i = findCol([/^op$|^operator|^carrier|^line/, /^선사/, /선사부호/]);
     const dg_i = findCol([/^dg$|hazmat|imdg/, /위험물/]);
     const tmp_i = findCol([/^temp|^temperature|^reefer/, /온도/, /냉장/]);

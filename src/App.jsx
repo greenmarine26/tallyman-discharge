@@ -104,7 +104,7 @@ export default function App() {
     return dischargeRecords.map(r => {
       const edi = ediByCn[r.cn];
       if (edi) {
-        // 리스트의 F/E, ISO, OP 가 있으면 리스트 우선 (리스트가 더 최신)
+        // 리스트의 정보가 있으면 리스트 우선 + EDI 보충
         return { 
           ...edi, 
           sl: r.sl || edi.sl, 
@@ -121,7 +121,23 @@ export default function App() {
           _matched: true 
         };
       }
-      return { ...r, _matched: false };
+      // EDI 매칭 안 되어도 리스트 정보로 표시 (cn, sl, iso, wt, op 등)
+      return { 
+        cn: r.cn,
+        sl: r.sl || '',
+        bl: r.bl || '',
+        wt: r.wt || 0,
+        fe: r.fe || '',
+        iso: r.iso || '',
+        op: r.op || '',
+        pol: r.pol || '',
+        pod: r.pod || '',
+        rf: r.rf || false,
+        dg: r.dg || false,
+        tmp: r.tmp || '',
+        bay: '', row: '', tier: '',
+        _matched: false 
+      };
     });
   }, [dischargeRecords, ediContainers]);
   
