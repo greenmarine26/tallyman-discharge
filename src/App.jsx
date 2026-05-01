@@ -1718,8 +1718,10 @@ function VoyageStatsBox({ voyage }) {
     const s = {
       total: containers.length,
       dc20F: 0, dc20E: 0, dc40F: 0, dc40E: 0, hc40F: 0, hc40E: 0,
+      rf20F: 0, rf20E: 0, rf40F: 0, rf40E: 0,
+      tk20: 0, tk40: 0, fr20: 0, fr40: 0, ot20: 0, ot40: 0,
       rf: 0, dg: 0, tk: 0, fr: 0, oog: 0,
-      f: 0, e: 0,
+      f: 0, e: 0, other: 0,
     };
     for (const c of containers) {
       if (c.fe === 'F') s.f++;
@@ -1733,13 +1735,19 @@ function VoyageStatsBox({ voyage }) {
       
       const lbl = isoToLabel(c.iso);
       const isF = c.fe === 'F';
-      if (lbl === '20DC' || lbl === '20GP') {
-        if (isF) s.dc20F++; else s.dc20E++;
-      } else if (lbl === '40DC' || lbl === '40GP') {
-        if (isF) s.dc40F++; else s.dc40E++;
-      } else if (lbl === '40HC') {
-        if (isF) s.hc40F++; else s.hc40E++;
-      }
+      
+      if (lbl === '20DC') { if (isF) s.dc20F++; else s.dc20E++; }
+      else if (lbl === '40DC') { if (isF) s.dc40F++; else s.dc40E++; }
+      else if (lbl === '40HC') { if (isF) s.hc40F++; else s.hc40E++; }
+      else if (lbl === '20RF') { if (isF) s.rf20F++; else s.rf20E++; }
+      else if (lbl === '40RF') { if (isF) s.rf40F++; else s.rf40E++; }
+      else if (lbl === '20TK') s.tk20++;
+      else if (lbl === '40TK') s.tk40++;
+      else if (lbl === '20FR') s.fr20++;
+      else if (lbl === '40FR') s.fr40++;
+      else if (lbl === '20OT') s.ot20++;
+      else if (lbl === '40OT') s.ot40++;
+      else s.other++;
     }
     return s;
   }, [containers]);
@@ -1806,8 +1814,9 @@ function VoyageStatsBox({ voyage }) {
       {/* 종류별 통계 */}
       {containers.length > 0 && (
         <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
-          <div className="text-xs font-bold text-blue-200 mb-2">📊 화물 종류별 통계 (전체 {stats.total}대)</div>
+          <div className="text-xs font-bold text-blue-200 mb-2">📊 화물 종류별 통계 (전체 {stats.total}대 = F {stats.f} / E {stats.e})</div>
           
+          {/* 일반 컨테이너 (F/E) */}
           <div className="grid grid-cols-3 gap-1.5 mb-2">
             <div className="bg-slate-800 rounded p-1.5 text-center">
               <div className="text-[10px] text-slate-400">20DC F/E</div>
@@ -1816,6 +1825,7 @@ function VoyageStatsBox({ voyage }) {
                 <span className="text-slate-500 text-[10px]"> / </span>
                 <span className="text-slate-400">{stats.dc20E}</span>
               </div>
+              <div className="text-[9px] text-slate-500 mono">합 {stats.dc20F + stats.dc20E}</div>
             </div>
             <div className="bg-slate-800 rounded p-1.5 text-center">
               <div className="text-[10px] text-slate-400">40DC F/E</div>
@@ -1824,6 +1834,7 @@ function VoyageStatsBox({ voyage }) {
                 <span className="text-slate-500 text-[10px]"> / </span>
                 <span className="text-slate-400">{stats.dc40E}</span>
               </div>
+              <div className="text-[9px] text-slate-500 mono">합 {stats.dc40F + stats.dc40E}</div>
             </div>
             <div className="bg-slate-800 rounded p-1.5 text-center">
               <div className="text-[10px] text-slate-400">40HC F/E</div>
@@ -1832,29 +1843,71 @@ function VoyageStatsBox({ voyage }) {
                 <span className="text-slate-500 text-[10px]"> / </span>
                 <span className="text-slate-400">{stats.hc40E}</span>
               </div>
+              <div className="text-[9px] text-slate-500 mono">합 {stats.hc40F + stats.hc40E}</div>
             </div>
           </div>
           
-          <div className="grid grid-cols-5 gap-1">
-            {stats.rf > 0 && <div className="bg-cyan-900/50 border border-cyan-700/50 rounded p-1.5 text-center">
-              <div className="text-[10px] text-cyan-300">❄ RF</div>
-              <div className="text-sm font-bold mono text-cyan-200">{stats.rf}</div>
+          {/* 리퍼 (있을 때만) */}
+          {(stats.rf20F + stats.rf20E + stats.rf40F + stats.rf40E) > 0 && (
+            <div className="grid grid-cols-2 gap-1.5 mb-2">
+              {(stats.rf20F + stats.rf20E) > 0 && (
+                <div className="bg-cyan-900/40 border border-cyan-700/40 rounded p-1.5 text-center">
+                  <div className="text-[10px] text-cyan-300">❄ 20RF F/E</div>
+                  <div className="text-sm font-bold mono">
+                    <span className="text-emerald-300">{stats.rf20F}</span>
+                    <span className="text-slate-500 text-[10px]"> / </span>
+                    <span className="text-slate-400">{stats.rf20E}</span>
+                  </div>
+                  <div className="text-[9px] text-cyan-500/70 mono">합 {stats.rf20F + stats.rf20E}</div>
+                </div>
+              )}
+              {(stats.rf40F + stats.rf40E) > 0 && (
+                <div className="bg-cyan-900/40 border border-cyan-700/40 rounded p-1.5 text-center">
+                  <div className="text-[10px] text-cyan-300">❄ 40RF F/E</div>
+                  <div className="text-sm font-bold mono">
+                    <span className="text-emerald-300">{stats.rf40F}</span>
+                    <span className="text-slate-500 text-[10px]"> / </span>
+                    <span className="text-slate-400">{stats.rf40E}</span>
+                  </div>
+                  <div className="text-[9px] text-cyan-500/70 mono">합 {stats.rf40F + stats.rf40E}</div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* 특수 (TK, FR, OT) */}
+          <div className="grid grid-cols-6 gap-1">
+            {stats.tk20 > 0 && <div className="bg-orange-900/50 border border-orange-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-orange-300">⬛ 20TK</div>
+              <div className="text-sm font-bold mono text-orange-200">{stats.tk20}</div>
+            </div>}
+            {stats.tk40 > 0 && <div className="bg-orange-900/50 border border-orange-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-orange-300">⬛ 40TK</div>
+              <div className="text-sm font-bold mono text-orange-200">{stats.tk40}</div>
+            </div>}
+            {stats.fr20 > 0 && <div className="bg-purple-900/50 border border-purple-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-purple-300">🔲 20FR</div>
+              <div className="text-sm font-bold mono text-purple-200">{stats.fr20}</div>
+            </div>}
+            {stats.fr40 > 0 && <div className="bg-purple-900/50 border border-purple-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-purple-300">🔲 40FR</div>
+              <div className="text-sm font-bold mono text-purple-200">{stats.fr40}</div>
+            </div>}
+            {stats.ot20 > 0 && <div className="bg-pink-900/50 border border-pink-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-pink-300">📐 20OT</div>
+              <div className="text-sm font-bold mono text-pink-200">{stats.ot20}</div>
+            </div>}
+            {stats.ot40 > 0 && <div className="bg-pink-900/50 border border-pink-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-pink-300">📐 40OT</div>
+              <div className="text-sm font-bold mono text-pink-200">{stats.ot40}</div>
             </div>}
             {stats.dg > 0 && <div className="bg-red-900/50 border border-red-700/50 rounded p-1.5 text-center">
               <div className="text-[10px] text-red-300">🔥 DG</div>
               <div className="text-sm font-bold mono text-red-200">{stats.dg}</div>
             </div>}
-            {stats.tk > 0 && <div className="bg-orange-900/50 border border-orange-700/50 rounded p-1.5 text-center">
-              <div className="text-[10px] text-orange-300">⬛ TK</div>
-              <div className="text-sm font-bold mono text-orange-200">{stats.tk}</div>
-            </div>}
-            {stats.fr > 0 && <div className="bg-purple-900/50 border border-purple-700/50 rounded p-1.5 text-center">
-              <div className="text-[10px] text-purple-300">🔲 FR</div>
-              <div className="text-sm font-bold mono text-purple-200">{stats.fr}</div>
-            </div>}
-            {stats.oog > 0 && <div className="bg-pink-900/50 border border-pink-700/50 rounded p-1.5 text-center">
-              <div className="text-[10px] text-pink-300">📐 OOG</div>
-              <div className="text-sm font-bold mono text-pink-200">{stats.oog}</div>
+            {stats.other > 0 && <div className="bg-slate-700 rounded p-1.5 text-center">
+              <div className="text-[10px] text-slate-300">기타</div>
+              <div className="text-sm font-bold mono text-slate-200">{stats.other}</div>
             </div>}
           </div>
           

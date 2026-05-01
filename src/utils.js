@@ -30,16 +30,86 @@ export const formatWt = (wt) => {
 };
 export const isoToLabel = (iso) => {
   if (!iso) return '';
-  const p = iso.toUpperCase();
-  if (p === '22GP' || p === '22G1' || p === '22G0') return '20DC';
-  if (p === '42GP' || p === '44GP' || p === '42G1') return '40DC';
-  if (p === '45GP' || p === '45G1') return '40HC';
-  if (p.length >= 3 && p[2] === 'R') return p[0] === '2' ? '20RF' : '40RF';
-  if (p.length >= 3 && p[2] === 'T') return p[0] === '2' ? '20TK' : '40TK';
-  if (p.length >= 3 && p[2] === 'U') return p[0] === '2' ? '20OT' : '40OT';
-  if (p[0] === '4') return '40' + p.substring(2, 3);
-  if (p[0] === '2') return '20' + p.substring(2, 3);
+  const p = String(iso).toUpperCase().trim().replace(/\s+/g, '');
+  
+  // === 20피트 ===
+  // 표준 ISO: 22GP, 22G1, 22G0
+  if (/^2[02][G][P0-9]/.test(p)) return '20DC';
+  // 사용자 표기: 20GP, 20DC, 20G0, 20G1
+  if (/^20[GD]/.test(p)) return '20DC';
+  // 리퍼: 22RE, 22R1, 22R5, 20RF
+  if (/^2[02][R]/.test(p)) return '20RF';
+  // 탱크: 22T6, 20TK
+  if (/^2[02][T]/.test(p)) return '20TK';
+  // OT (Open Top): 22UP, 20OT
+  if (/^2[02][U]/.test(p) || /^20O[TH]/.test(p)) return '20OT';
+  // FR (Flat Rack): 22PF, 20FR
+  if (/^2[02][P]/.test(p) || /^20F/.test(p)) return '20FR';
+  
+  // === 40피트 일반 (DC) ===
+  // 42GP, 42G1, 44GP, 40DC, 40GP
+  if (/^4[24][G][P012]/.test(p)) return '40DC';
+  if (/^40[DG]/.test(p)) return '40DC';
+  
+  // === 40피트 HC (High Cube) ===
+  // 45GP, 45G1, 42HQ, 40HC, 40HQ, 4361
+  if (/^45[G]/.test(p)) return '40HC';
+  if (/^4[24]H/.test(p)) return '40HC';
+  if (/^40H/.test(p)) return '40HC';
+  if (/^43/.test(p)) return '40HC';  // 43xx (나쁜 ISO 도 40HC 로)
+  
+  // === 40피트 특수 ===
+  // 리퍼: 45RE, 45R1, 42RE, 40RF
+  if (/^4[245]R/.test(p)) return '40RF';
+  if (/^40R/.test(p)) return '40RF';
+  // 탱크: 42TK, 40TK
+  if (/^4[24]T/.test(p)) return '40TK';
+  if (/^40T/.test(p)) return '40TK';
+  // OT (Open Top): 42UP, 40OH, 40OT
+  if (/^4[24]U/.test(p)) return '40OT';
+  if (/^40O/.test(p)) return '40OT';
+  // FR (Flat Rack): 42PC, 42PF, 40FR
+  if (/^4[24]P/.test(p)) return '40FR';
+  if (/^40F/.test(p)) return '40FR';
+  // PL (Platform): 49PL
+  if (/^4[24]9/.test(p) || /^4[24]L/.test(p)) return '40PL';
+  
+  // === fallback ===
+  // 첫자리가 4 → 40, 2 → 20
+  if (p[0] === '4') {
+    const t = p[2];
+    if (t === 'G' || t === 'D') return '40DC';
+    if (t === 'R') return '40RF';
+    if (t === 'T') return '40TK';
+    if (t === 'U' || t === 'O') return '40OT';
+    if (t === 'P' || t === 'F') return '40FR';
+    return '40' + (t || '?');
+  }
+  if (p[0] === '2') {
+    const t = p[2];
+    if (t === 'G' || t === 'D') return '20DC';
+    if (t === 'R') return '20RF';
+    if (t === 'T') return '20TK';
+    if (t === 'U' || t === 'O') return '20OT';
+    if (t === 'P' || t === 'F') return '20FR';
+    return '20' + (t || '?');
+  }
   return p;
+};
+
+// 규격 카테고리 (통계용)
+export const isoCategory = (iso) => {
+  const lbl = isoToLabel(iso);
+  if (!lbl) return '?';
+  // 그룹화: 20DC / 40DC / 40HC / RF / DG / TK / FR / OT / 기타
+  if (lbl === '20DC' || lbl === '20GP') return '20DC';
+  if (lbl === '40DC' || lbl === '40GP') return '40DC';
+  if (lbl === '40HC') return '40HC';
+  if (lbl.endsWith('RF')) return 'RF';
+  if (lbl.endsWith('TK')) return 'TK';
+  if (lbl.endsWith('FR')) return 'FR';
+  if (lbl.endsWith('OT')) return 'OT';
+  return lbl;
 };
 
 // === BAPLIE EDI Parser ===
