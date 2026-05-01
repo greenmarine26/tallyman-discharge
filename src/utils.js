@@ -183,7 +183,7 @@ export function parseAscFile(text) {
     if (line.startsWith('$')) continue;
     const slot = line.substring(0, 6).trim();
     if (!/^\d{6}$/.test(slot)) continue;
-    const cn = line.substring(7, 18).trim();
+    const cn = line.substring(7, 18).replace(/[\s\-]/g, '').toUpperCase();
     if (!/^[A-Z]{4}\d{7}$/.test(cn)) continue;
     
     const bay = slot.substring(0, 2).padStart(3, '0');
@@ -192,34 +192,64 @@ export function parseAscFile(text) {
     const op = line.substring(19, 27).trim();
     const typeBlock = line.substring(44, 54).trim();
     
-    let tp = '', iso = '', fe = 'F';
-    let m = typeBlock.match(/^([A-Z]{2}\d{2})(\d{3})([FE])/);
-    if (m) {
-      tp = m[1]; iso = m[2] + 'GP'; fe = m[3];
+    let tp = '', iso = '', fe = 'F', wt = 0;
+    
+    // 형식 1: DC20234F (TYPE+WT3자리+F/E) - KKAK 형식
+    let m1 = typeBlock.match(/^([A-Z]{2}\d{2})(\d{3})([FE])/);
+    // 형식 2: 20GP193F (ISO+WT3자리+F/E) - STSE 형식
+    let m2 = typeBlock.match(/^(\d{2}[A-Z]{2})(\d{3})([FE])/);
+    
+    if (m1) {
+      tp = m1[1]; iso = m1[2] + 'GP'; fe = m1[3];
       if (tp.startsWith('TK')) iso = '22T6';
       if (tp.startsWith('RF')) iso = tp.endsWith('20') ? '22R5' : '45R1';
       if (tp.startsWith('DC') && tp.endsWith('20')) iso = '22GP';
       if (tp.startsWith('DC') && tp.endsWith('40')) iso = '42GP';
       if (tp === 'HC40') iso = '45GP';
+      // KKAK 형식의 무게는 끝쪽 5자리
+      const wtMatch = line.substring(54, 100).match(/(\d{5})/);
+      wt = wtMatch ? parseInt(wtMatch[1]) : 0;
+    } else if (m2) {
+      // STSE 형식: 20GP193F → ISO=20GP, 무게=193*100=19300kg
+      iso = m2[1];
+      const wt100 = parseInt(m2[2]); // 100kg 단위
+      wt = wt100 * 100;
+      fe = m2[3];
+      tp = iso;
     }
-    const wtMatch = line.substring(60, 100).match(/(\d{5})/);
-    const wt = wtMatch ? parseInt(wtMatch[1]) : 0;
-    const tail = line.replace(/\u0000/g, '').trim();
-    const polPod = tail.match(/([A-Z]{5})([A-Z]{5})$/);
-    let pol = 'KRINC', pod = '';
-    if (polPod) { pol = polPod[1]; pod = polPod[2]; }
+    
+    // POL/POD 추출 - 두 형식 모두 처리
+    let pol = '', pod = '';
+    
+    // 형식 1: 위치 27-44 에 "INCPUS      KRPUS" (POL5 + 공백 + POD5)
+    const posBlock1 = line.substring(27, 44);
+    const m_polpod1 = posBlock1.match(/([A-Z]{5})\s+([A-Z]{5})/);
+    if (m_polpod1) {
+      pol = m_polpod1[1];
+      pod = m_polpod1[2];
+    } else {
+      // 형식 2: 위치 27-34 에 "TAOPTK" (POL3 + POD3)
+      const posBlock2 = line.substring(27, 35).trim();
+      if (/^[A-Z]{6}$/.test(posBlock2)) {
+        pol = posBlock2.substring(0, 3);
+        pod = posBlock2.substring(3, 6);
+      } else {
+        // 끝부분 fallback
+        const tail = line.replace(/\u0000/g, '').trim();
+        const polPod = tail.match(/([A-Z]{5})([A-Z]{5})$/);
+        if (polPod) { pol = polPod[1]; pod = polPod[2]; }
+      }
+    }
     
     // 무게 기반 F/E 검증 (실제 작업자 경험)
-    // 20피트 Empty ≈ 2.2톤, 40피트 Empty ≈ 3.8톤
-    // 무게가 임계값보다 낮으면 Empty 로 판정 (덮어쓰기)
     let feFinal = fe;
     if (wt > 0) {
-      const is20 = tp && (tp.endsWith('20') || tp === 'DC20' || tp === 'RF20' || tp === 'TK20');
-      const is40 = tp && (tp.endsWith('40') || tp === 'DC40' || tp === 'RF40' || tp === 'HC40');
-      // 20피트: 2.5톤 이하 = Empty / 40피트: 4.5톤 이하 = Empty
+      const is20 = (tp && (tp.endsWith('20') || tp === 'DC20' || tp === 'RF20' || tp === 'TK20'))
+                || (iso && iso.startsWith('22'));
+      const is40 = (tp && (tp.endsWith('40') || tp === 'DC40' || tp === 'RF40' || tp === 'HC40'))
+                || (iso && (iso.startsWith('42') || iso.startsWith('44') || iso.startsWith('45')));
       if (is20 && wt <= 2500) feFinal = 'E';
       else if (is40 && wt <= 4500) feFinal = 'E';
-      // 무게 충분히 무거우면 Full 확정
       else if (wt > 5000) feFinal = 'F';
     }
     
@@ -228,8 +258,8 @@ export function parseAscFile(text) {
       fe: feFinal, 
       wt, op, pol, pod,
       dg: false, dgc: '', un: '',
-      rf: tp.startsWith('RF'),
-      tk: tp.startsWith('TK'),
+      rf: (tp && tp.startsWith('RF')) || (iso && iso[2] === 'R'),
+      tk: (tp && tp.startsWith('TK')) || (iso && iso[2] === 'T'),
       oog: false,
       sl: '', sh: '', bl: '', tmp: '',
     });
