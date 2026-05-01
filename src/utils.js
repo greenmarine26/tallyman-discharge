@@ -328,23 +328,29 @@ export function parseAscFile(text) {
       tp = iso;
     }
     
-    // POL/POD 추출 - 두 형식 모두 처리
+    // POL/POD 추출 - SWCP/STSE/KKAK 모든 형식 처리
     let pol = '', pod = '';
     
-    // 형식 1: 위치 27-44 에 "INCPUS      KRPUS" (POL5 + 공백 + POD5)
-    const posBlock1 = line.substring(27, 44);
-    const m_polpod1 = posBlock1.match(/([A-Z]{5})\s+([A-Z]{5})/);
-    if (m_polpod1) {
-      pol = m_polpod1[1];
-      pod = m_polpod1[2];
+    // V33: 형식 우선순위 변경 — POL3+POD3 (SWCP) 먼저, 그 다음 POL5+POD5 (KKAK)
+    // SWCP: "SGNPTK      KRPTK" (POL3+POD3 + 공백 + T_POD5)
+    // KKAK: "INCPUS      KRPUS" (POL5+공백+POD5)
+    
+    // 형식 A: 첫 6자가 영문 6자 = POL3+POD3 (SWCP/STSE)
+    const first6 = line.substring(27, 33);
+    if (/^[A-Z]{6}$/.test(first6)) {
+      // POL3+POD3 형식
+      pol = first6.substring(0, 3);
+      pod = first6.substring(3, 6);
+      // T_POD 도 있으면 (위치 33-44 의 KRPTK 같은 거) 추후 사용 가능
     } else {
-      // 형식 2: 위치 27-34 에 "TAOPTK" (POL3 + POD3)
-      const posBlock2 = line.substring(27, 35).trim();
-      if (/^[A-Z]{6}$/.test(posBlock2)) {
-        pol = posBlock2.substring(0, 3);
-        pod = posBlock2.substring(3, 6);
+      // 형식 B: POL5 + 공백 + POD5 (KKAK)
+      const posBlock1 = line.substring(27, 44);
+      const m_polpod1 = posBlock1.match(/^([A-Z]{5})\s+([A-Z]{5})/);
+      if (m_polpod1) {
+        pol = m_polpod1[1];
+        pod = m_polpod1[2];
       } else {
-        // 끝부분 fallback
+        // 형식 C: 끝 fallback
         const tail = line.replace(/\u0000/g, '').trim();
         const polPod = tail.match(/([A-Z]{5})([A-Z]{5})$/);
         if (polPod) { pol = polPod[1]; pod = polPod[2]; }
