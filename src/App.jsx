@@ -467,15 +467,16 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     const counts = { dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, hc: 0, dc20: 0, dc40: 0 };
     for (const c of list) {
       if (c.dg) counts.dg++;
-      if (c.rf) counts.rf++;
+      const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
+      if (c.rf && hasTmp && c.fe === 'F') counts.rf++;
       if (c.tk) counts.tk++;
       if (c.oog) counts.oog++;
       if (c.fe === 'F') counts.full++;
       else counts.empty++;
       const lbl = isoToLabel(c.iso);
       if (lbl === '40HC') counts.hc++;
-      else if (lbl === '20DC' || lbl === '20GP') counts.dc20++;
-      else if (lbl === '40DC' || lbl === '40GP') counts.dc40++;
+      else if (lbl === '20DC') counts.dc20++;
+      else if (lbl === '40DC') counts.dc40++;
     }
     return counts;
   }, [list]);
@@ -489,7 +490,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     
     // 화물 종류 필터
     if (cargoFilter === 'dg' && !c.dg) return false;
-    if (cargoFilter === 'rf' && !c.rf) return false;
+    if (cargoFilter === 'rf' && !(c.rf && c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0' && c.fe === 'F')) return false;
     if (cargoFilter === 'tk' && !c.tk) return false;
     if (cargoFilter === 'oog' && !c.oog) return false;
     if (cargoFilter === 'full' && c.fe !== 'F') return false;
@@ -593,7 +594,10 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
               <span className={`text-[9px] mono px-1 py-0.5 rounded font-bold ${c.fe === 'F' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-700 text-slate-300'}`}>{c.fe || 'F'}</span>
               <span className="text-[9px] mono px-1 py-0.5 rounded font-bold bg-blue-900 text-blue-300">{isoToLabel(c.iso)}</span>
               {c.dg && <span className="text-[9px] bg-red-700 text-white px-1 py-0.5 rounded font-bold">🔥 DG</span>}
-              {c.rf && <span className="text-[9px] bg-cyan-700 text-white px-1 py-0.5 rounded font-bold">❄ RF{c.tmp ? ` ${c.tmp}°` : ''}</span>}
+              {c.rf && (c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0' && c.fe === 'F'
+                ? <span className="text-[9px] bg-cyan-700 text-white px-1 py-0.5 rounded font-bold">❄ RF {c.tmp}°</span>
+                : <span className="text-[9px] bg-cyan-900/70 text-cyan-300 px-1 py-0.5 rounded font-bold border border-cyan-700/50">RE</span>
+              )}
               {c.tk && <span className="text-[9px] bg-orange-700 text-white px-1 py-0.5 rounded font-bold">⬛ TK</span>}
               {c.oog && <span className="text-[9px] bg-purple-700 text-white px-1 py-0.5 rounded font-bold">📐 OOG</span>}
               {xrayList[c.cn] && <span className="text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold">📡 X-RAY</span>}
@@ -1718,9 +1722,9 @@ function VoyageStatsBox({ voyage }) {
     const s = {
       total: containers.length,
       dc20F: 0, dc20E: 0, dc40F: 0, dc40E: 0, hc40F: 0, hc40E: 0,
-      rf20F: 0, rf20E: 0, rf40F: 0, rf40E: 0,
+      rf20F: 0, rf40F: 0,
       tk20: 0, tk40: 0, fr20: 0, fr40: 0, ot20: 0, ot40: 0,
-      rf: 0, dg: 0, tk: 0, fr: 0, oog: 0,
+      dg: 0, fr: 0, oog: 0,
       f: 0, e: 0, other: 0,
     };
     for (const c of containers) {
@@ -1728,19 +1732,23 @@ function VoyageStatsBox({ voyage }) {
       else s.e++;
       
       if (c.dg) s.dg++;
-      if (c.rf) s.rf++;
-      if (c.tk) s.tk++;
       if (c.fr) s.fr++;
       if (c.oog) s.oog++;
       
       const lbl = isoToLabel(c.iso);
       const isF = c.fe === 'F';
+      const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
       
-      if (lbl === '20DC') { if (isF) s.dc20F++; else s.dc20E++; }
+      if (lbl === '20RF') {
+        if (isF && hasTmp) s.rf20F++;
+        else { if (isF) s.dc20F++; else s.dc20E++; }
+      } else if (lbl === '40RF') {
+        if (isF && hasTmp) s.rf40F++;
+        else { if (isF) s.hc40F++; else s.hc40E++; }
+      }
+      else if (lbl === '20DC') { if (isF) s.dc20F++; else s.dc20E++; }
       else if (lbl === '40DC') { if (isF) s.dc40F++; else s.dc40E++; }
       else if (lbl === '40HC') { if (isF) s.hc40F++; else s.hc40E++; }
-      else if (lbl === '20RF') { if (isF) s.rf20F++; else s.rf20E++; }
-      else if (lbl === '40RF') { if (isF) s.rf40F++; else s.rf40E++; }
       else if (lbl === '20TK') s.tk20++;
       else if (lbl === '40TK') s.tk40++;
       else if (lbl === '20FR') s.fr20++;
@@ -1847,29 +1855,19 @@ function VoyageStatsBox({ voyage }) {
             </div>
           </div>
           
-          {/* 리퍼 (있을 때만) */}
-          {(stats.rf20F + stats.rf20E + stats.rf40F + stats.rf40E) > 0 && (
+          {/* 리퍼 (온도 있는 Full 만) */}
+          {(stats.rf20F + stats.rf40F) > 0 && (
             <div className="grid grid-cols-2 gap-1.5 mb-2">
-              {(stats.rf20F + stats.rf20E) > 0 && (
+              {stats.rf20F > 0 && (
                 <div className="bg-cyan-900/40 border border-cyan-700/40 rounded p-1.5 text-center">
-                  <div className="text-[10px] text-cyan-300">❄ 20RF F/E</div>
-                  <div className="text-sm font-bold mono">
-                    <span className="text-emerald-300">{stats.rf20F}</span>
-                    <span className="text-slate-500 text-[10px]"> / </span>
-                    <span className="text-slate-400">{stats.rf20E}</span>
-                  </div>
-                  <div className="text-[9px] text-cyan-500/70 mono">합 {stats.rf20F + stats.rf20E}</div>
+                  <div className="text-[10px] text-cyan-300">❄ 20RF (운영)</div>
+                  <div className="text-sm font-bold mono text-cyan-200">{stats.rf20F}</div>
                 </div>
               )}
-              {(stats.rf40F + stats.rf40E) > 0 && (
+              {stats.rf40F > 0 && (
                 <div className="bg-cyan-900/40 border border-cyan-700/40 rounded p-1.5 text-center">
-                  <div className="text-[10px] text-cyan-300">❄ 40RF F/E</div>
-                  <div className="text-sm font-bold mono">
-                    <span className="text-emerald-300">{stats.rf40F}</span>
-                    <span className="text-slate-500 text-[10px]"> / </span>
-                    <span className="text-slate-400">{stats.rf40E}</span>
-                  </div>
-                  <div className="text-[9px] text-cyan-500/70 mono">합 {stats.rf40F + stats.rf40E}</div>
+                  <div className="text-[10px] text-cyan-300">❄ 40RF (운영)</div>
+                  <div className="text-sm font-bold mono text-cyan-200">{stats.rf40F}</div>
                 </div>
               )}
             </div>
@@ -2155,7 +2153,10 @@ function DetailModal({ c, isDischarge, xrayMarked, toggleXray, completed, comple
       </div>
       {(c.dg || c.rf || c.tk || c.oog) && <div className="flex flex-wrap gap-1 text-xs">
         {c.dg && <span className="bg-red-900/60 text-red-200 px-2 py-1 rounded font-bold">🔥 DG {c.un && `UN${c.un}`}</span>}
-        {c.rf && <span className="bg-cyan-900/60 text-cyan-200 px-2 py-1 rounded font-bold">❄ REEFER {c.tmp && `${c.tmp}°C`}</span>}
+        {c.rf && (c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0' && c.fe === 'F'
+          ? <span className="bg-cyan-900/60 text-cyan-200 px-2 py-1 rounded font-bold">❄ REEFER {c.tmp}°C</span>
+          : <span className="bg-cyan-900/30 text-cyan-300 px-2 py-1 rounded font-bold border border-cyan-700/50">RE (Empty)</span>
+        )}
         {c.tk && <span className="bg-orange-900/60 text-orange-200 px-2 py-1 rounded font-bold">⬛ TANK</span>}
         {c.oog && <span className="bg-purple-900/60 text-purple-200 px-2 py-1 rounded font-bold">📐 OOG</span>}
       </div>}
