@@ -95,6 +95,29 @@ export const isoToLabel = (iso) => {
   return p;
 };
 
+// PDF 베이플랜 형식의 타입 라벨 (셀 표시용)
+// PDF 에서는 raw 코드 그대로 사용: DC20, DCHC, RFHC, TK20 등
+export const isoToPdfLabel = (iso, tp) => {
+  // tp (TYPE 블록) 가 있으면 그대로 사용 (DC20, DCHC, RFHC 등)
+  if (tp && tp.length >= 3) return tp.toUpperCase().trim();
+  // 없으면 isoToLabel 결과를 PDF 형식으로 변환
+  const lbl = isoToLabel(iso);
+  if (!lbl) return '';
+  // 20DC → DC20, 40HC → DCHC, 40RF → RFHC, 20RF → RF20, 20TK → TK20
+  if (lbl === '20DC') return 'DC20';
+  if (lbl === '40DC') return 'DC40';
+  if (lbl === '40HC') return 'DCHC';
+  if (lbl === '20RF') return 'RF20';
+  if (lbl === '40RF') return 'RFHC';
+  if (lbl === '20TK') return 'TK20';
+  if (lbl === '40TK') return 'TK40';
+  if (lbl === '20FR') return 'FR20';
+  if (lbl === '40FR') return 'FR40';
+  if (lbl === '20OT') return 'OT20';
+  if (lbl === '40OT') return 'OT40';
+  return lbl;
+};
+
 // 규격 카테고리 (통계용)
 export const isoCategory = (iso) => {
   const lbl = isoToLabel(iso);

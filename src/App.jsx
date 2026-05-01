@@ -9,7 +9,7 @@ import {
   Mic, MicOff, Volume2, VolumeX, Ship
 } from 'lucide-react';
 import { 
-  fmtPos, formatWt, isoToLabel, 
+  fmtPos, formatWt, isoToLabel, isoToPdfLabel,
   parseBAPLIE, parseAscFile, parseListExcel, parseXrayList 
 } from './utils.js';
 import {
@@ -937,7 +937,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     const ptk = isPtk(c);
     const fe = c.fe || 'F';
     const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '';
-    const typeLabel = isoToLabel(c.iso);
+    const typeLabel = isoToPdfLabel(c.iso, c.tp);
     const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3);
     const podLabel = (c.pod || '').replace(/^KR/, '').slice(0, 3);
     const transit = c.tr ? c.tr.slice(0, 3) : '';
@@ -1248,7 +1248,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
     const ptk = isPtk(c);
     const fe = c.fe || 'F';
     const wt = c.wt > 0 ? (c.wt / 1000).toFixed(1) : '0.0';
-    const typeLabel = isoToLabel(c.iso) || '';
+    const typeLabel = isoToPdfLabel(c.iso, c.tp) || '';
     const polLabel = (c.pol || '').replace(/^KR/, '').slice(0, 3).padEnd(3, ' ');
     const podLabel = (c.pod || '').replace(/^KR/, '').slice(0, 3);
     const transit = (c.transit || '').slice(0, 3);
@@ -1340,7 +1340,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
       {/* DECK 섹션 (위쪽 5/10) */}
       <div>
         <div className="text-[10px] text-slate-500 mb-0.5 font-bold">⬆ DECK</div>
-        {/* ROW 헤더 (위) */}
+        {/* ROW 헤더 (위) — PDF 처럼 두 줄 (짝수베이/홀수베이) */}
         <div className="flex gap-0.5 mb-0.5">
           <div style={{ width: 24 }}></div>
           {allRows.map((row, idx) => (
@@ -1349,6 +1349,16 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
           ))}
           <div style={{ width: 24 }}></div>
         </div>
+        {page.evenBay && page.oddBay && (
+          <div className="flex gap-0.5 mb-0.5">
+            <div style={{ width: 24 }}></div>
+            {allRows.map((row, idx) => (
+              <div key={`dh2-${idx}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
+                style={{ width: cellW }}>{row || ''}</div>
+            ))}
+            <div style={{ width: 24 }}></div>
+          </div>
+        )}
         {/* DECK TIER × ROW */}
         {deckTiersPadded.map((tier, ti) => (
           <div key={`dt-${ti}`} className="flex gap-0.5 mb-0.5 items-center">
@@ -1380,7 +1390,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
             <div className="text-[9px] text-slate-500 mono font-bold flex-shrink-0 pl-1" style={{ width: 24 }}>{tier || ''}</div>
           </div>
         ))}
-        {/* ROW 헤더 (아래) */}
+        {/* ROW 헤더 (아래) — PDF 처럼 두 줄 */}
         <div className="flex gap-0.5 mt-0.5">
           <div style={{ width: 24 }}></div>
           {allRows.map((row, idx) => (
@@ -1389,6 +1399,16 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
           ))}
           <div style={{ width: 24 }}></div>
         </div>
+        {page.evenBay && page.oddBay && (
+          <div className="flex gap-0.5">
+            <div style={{ width: 24 }}></div>
+            {allRows.map((row, idx) => (
+              <div key={`hb2-${idx}`} className="text-center text-[9px] text-slate-500 mono font-bold flex-shrink-0"
+                style={{ width: cellW }}>{row || ''}</div>
+            ))}
+            <div style={{ width: 24 }}></div>
+          </div>
+        )}
       </div>
     </div>
   );
