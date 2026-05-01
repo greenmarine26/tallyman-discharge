@@ -467,6 +467,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     const counts = { dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, hc: 0, dc20: 0, dc40: 0 };
     for (const c of list) {
       if (c.dg) counts.dg++;
+      // 리퍼는 온도 있고 Full 만 카운트
       const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
       if (c.rf && hasTmp && c.fe === 'F') counts.rf++;
       if (c.tk) counts.tk++;
@@ -498,7 +499,6 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     if (cargoFilter === 'hc' && isoToLabel(c.iso) !== '40HC') return false;
     if (cargoFilter === '20' && !['20DC', '20GP'].includes(isoToLabel(c.iso))) return false;
     if (cargoFilter === '40' && !['40DC', '40GP'].includes(isoToLabel(c.iso))) return false;
-    if (cargoFilter === 'xray' && !xrayList[c.cn]) return false;
     
     // 검색
     if (search.length >= 2) {
@@ -560,7 +560,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
       {cargoCounts.dg > 0 && <button onClick={() => setCargoFilter('dg')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'dg' ? 'bg-red-600 text-white' : 'bg-slate-800 text-red-300'}`}>🔥 DG {cargoCounts.dg}</button>}
       {cargoCounts.tk > 0 && <button onClick={() => setCargoFilter('tk')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ TK {cargoCounts.tk}</button>}
       {cargoCounts.oog > 0 && <button onClick={() => setCargoFilter('oog')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'oog' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-purple-300'}`}>📐 OOG {cargoCounts.oog}</button>}
-      <button onClick={() => setCargoFilter('xray')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'xray' ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-amber-300'}`}>📡 X-RAY</button>
+
     </div>
     
     <div className="text-[10px] text-slate-500 px-1">
@@ -600,7 +600,6 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
               )}
               {c.tk && <span className="text-[9px] bg-orange-700 text-white px-1 py-0.5 rounded font-bold">⬛ TK</span>}
               {c.oog && <span className="text-[9px] bg-purple-700 text-white px-1 py-0.5 rounded font-bold">📐 OOG</span>}
-              {xrayList[c.cn] && <span className="text-[9px] bg-amber-500 text-slate-900 px-1 py-0.5 rounded font-bold">📡 X-RAY</span>}
             </div>
             {c.sl && <div className="text-[10px] mono text-amber-200 mt-0.5">실 {c.sl}</div>}
             <div className="flex items-center gap-2 mt-1 text-[10px] mono flex-wrap text-slate-400">
@@ -610,10 +609,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
               {isComp && info?.by && <span className="text-emerald-300">[{info.by}]</span>}
             </div>
           </div>
-          <button onClick={(e) => { e.stopPropagation(); toggleXray(c.cn); }}
-            className={`w-9 self-center mr-2 h-9 rounded text-xs font-bold mono flex-shrink-0 ${xrayList[c.cn] ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-500'}`}>
-            {xrayList[c.cn] ? '✓' : 'X'}
-          </button>
+
         </div>;
       })}
       {filtered.length === 0 && <div className="p-8 text-center text-slate-500 text-sm">데이터 없음</div>}
@@ -758,32 +754,53 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
   }, [ediContainers]);
   
   // 페이지 = 짝수/홀수 베이 한 쌍 (PDF 처럼)
+  // 빈 베이도 표시 (1번~최대번호까지 연속)
   const pages = useMemo(() => {
     const bays = Object.keys(bayGroups).sort();
+    if (bays.length === 0) return [];
+    
+    // 베이 번호 자릿수 (보통 2자리 또는 3자리)
+    const bayLen = bays[0].length;
+    
+    // 최대 베이 번호 찾기
+    const maxBay = Math.max(...bays.map(b => parseInt(b)));
+    
     const out = [];
-    const used = new Set();
-    for (const b of bays) {
-      if (used.has(b)) continue;
-      const num = parseInt(b);
-      if (num % 2 === 0) {
-        const odd = String(num + 1).padStart(b.length, '0');
-        const hasOdd = bays.includes(odd);
+    
+    // 짝수 베이 1번부터 maxBay 까지 (홀수 베이는 짝수 베이와 함께 표시)
+    for (let n = 1; n <= maxBay; n++) {
+      // 짝수 베이가 메인, 홀수는 짝수+1
+      // 일반적으로 컨테이너 베이는 홀수가 20', 짝수가 40' (홀수 두개 = 짝수 한개)
+      if (n % 2 === 0) {
+        // 짝수 베이 페이지 (홀수 베이 = 같은 페이지)
+        const evenStr = String(n).padStart(bayLen, '0');
+        const oddBefore = String(n - 1).padStart(bayLen, '0');
+        const oddAfter = String(n + 1).padStart(bayLen, '0');
+        
+        const hasEven = bays.includes(evenStr);
+        const hasOdd = bays.includes(oddAfter);
+        
+        // 데이터가 있는 베이만 표시할지, 빈 베이도 표시할지
+        // → 빈 베이도 표시
         out.push({
-          title: hasOdd ? `BAY(${b}) ${odd}` : `BAY ${b}`,
-          evenBay: b,
-          oddBay: hasOdd ? odd : null,
+          title: `BAY ${evenStr}${hasOdd || bays.includes(oddAfter) ? ` / ${oddAfter}` : ''}`,
+          evenBay: evenStr,
+          oddBay: oddAfter,
+          isEmpty: !hasEven && !hasOdd,
         });
-        used.add(b);
-        if (hasOdd) used.add(odd);
-      } else {
-        out.push({
-          title: `BAY ${b}`,
-          evenBay: null,
-          oddBay: b,
-        });
-        used.add(b);
       }
     }
+    
+    // 마지막에 홀수 베이 1번 (보통 선수 부분) 따로 추가
+    if (bays.includes(String(1).padStart(bayLen, '0'))) {
+      out.unshift({
+        title: `BAY ${String(1).padStart(bayLen, '0')}`,
+        evenBay: null,
+        oddBay: String(1).padStart(bayLen, '0'),
+        isEmpty: false,
+      });
+    }
+    
     return out;
   }, [bayGroups]);
   
@@ -829,14 +846,42 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     });
   };
   
-  // DECK / HOLD 분리
+  // 베이 구조 사전 분석 (빈 슬롯 포함하여 전체 row/tier 범위 추출)
+  const bayStructureMap = useMemo(() => {
+    const map = {}; // { bay: { rows: Set, deckTiers: Set, holdTiers: Set } }
+    for (const c of ediContainers) {
+      if (!c.bay) continue;
+      if (!map[c.bay]) map[c.bay] = { rows: new Set(), deckTiers: new Set(), holdTiers: new Set() };
+      if (c.row) map[c.bay].rows.add(c.row);
+      if (c.tier) {
+        if (parseInt(c.tier) >= 80) map[c.bay].deckTiers.add(c.tier);
+        else map[c.bay].holdTiers.add(c.tier);
+      }
+    }
+    return map;
+  }, [ediContainers]);
+  
+  // DECK / HOLD 분리 (페이지 컨테이너만)
   const deckContainers = pageContainers.filter(c => parseInt(c.tier) >= 80);
   const holdContainers = pageContainers.filter(c => parseInt(c.tier) < 80);
   
-  const deckRows = sortRows(deckContainers.map(c => c.row));
-  const deckTiers = Array.from(new Set(deckContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
-  const holdRows = sortRows(holdContainers.map(c => c.row));
-  const holdTiers = Array.from(new Set(holdContainers.map(c => c.tier))).sort((a, b) => parseInt(b) - parseInt(a));
+  // ROW/TIER 추출: 페이지의 베이 구조를 합산
+  const pageBayKeys = [currentPage.evenBay, currentPage.oddBay].filter(Boolean);
+  const allRowsInPage = new Set();
+  const allDeckTiers = new Set();
+  const allHoldTiers = new Set();
+  for (const bk of pageBayKeys) {
+    const bs = bayStructureMap[bk];
+    if (!bs) continue;
+    for (const r of bs.rows) allRowsInPage.add(r);
+    for (const t of bs.deckTiers) allDeckTiers.add(t);
+    for (const t of bs.holdTiers) allHoldTiers.add(t);
+  }
+  
+  const deckRows = sortRows([...allRowsInPage]);
+  const deckTiers = [...allDeckTiers].sort((a, b) => parseInt(b) - parseInt(a));
+  const holdRows = sortRows([...allRowsInPage]);
+  const holdTiers = [...allHoldTiers].sort((a, b) => parseInt(b) - parseInt(a));
   
   // 셀 찾기
   const getCell = (row, tier) => {
@@ -997,7 +1042,6 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-2 flex flex-wrap gap-2 text-[10px]">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-yellow-200 border border-yellow-500"></span>평택 양하</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-200 border border-orange-400"></span>시프팅</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-200 border border-purple-400"></span>X-RAY</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-white border border-slate-300"></span>완료</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-300"></span>통과</span>
       </div>
@@ -1024,6 +1068,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
                 isMobile={isMobile}
                 cellColor={cellColor}
                 globalRowRange={globalRowRange}
+                bayStructureMap={bayStructureMap}
               />
             ))}
           </div>
@@ -1042,6 +1087,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
             isMobile={isMobile}
             cellColor={cellColor}
             globalRowRange={globalRowRange}
+            bayStructureMap={bayStructureMap}
           />
         )}
       </div>
@@ -1058,7 +1104,7 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
 
 // === 베이 한 페이지 (DECK + 해치커버 + HOLD) ===
 // === 베이 한 페이지 — 5:5 비율 + X 표시 + 전체 베이 가운데 정렬 ===
-function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor, globalRowRange }) {
+function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shiftingMap, isPtk, setSelectedCn, cellW, cellH, fontSize, isMobile, cellColor, globalRowRange, bayStructureMap }) {
   // 짝수 베이 컨 (40피트)
   const evenContainers = page.evenBay ? (bayGroups[page.evenBay] || []) : [];
   // 홀수 베이 컨 (20피트)
@@ -1101,9 +1147,18 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   };
   
   // X 표시 위치도 ROW 에 포함시켜야 함 (없는 ROW 라도 표시 필요)
+  // V29: bayStructureMap 에서 베이 전체의 row 도 가져옴 (빈 슬롯도 표시)
+  const fullRowsFromStructure = [];
+  if (bayStructureMap) {
+    for (const bk of [page.evenBay, page.oddBay].filter(Boolean)) {
+      const bs = bayStructureMap[bk];
+      if (bs) for (const r of bs.rows) fullRowsFromStructure.push(r);
+    }
+  }
   const allRowsRaw = sortRows([
     ...allContainers.map(c => c.row),
-    ...Array.from(xMarks).map(k => k.split('-')[0])
+    ...Array.from(xMarks).map(k => k.split('-')[0]),
+    ...fullRowsFromStructure
   ]);
   
   // 좌우 5:5 균형 — 모든 베이 통일 폭 (00 이 전체에서 같은 위치)
@@ -1408,7 +1463,7 @@ const speakContainer = (c, xrayOn) => {
     sealText = ', 엠티';
   }
   
-  const xrayWarn = xrayOn ? '. 엑스레이 대상입니다. 실 달아주세요.' : '';
+  const xrayWarn = '';
   
   let posText = '';
   if (c.bay) {
@@ -1589,7 +1644,6 @@ function SearchTab({ query, setQuery, results, xrayList, dischargeCns, setSelect
                 {c.dg && <span className="text-red-400">🔥</span>}
                 {c.rf && <span className="text-cyan-400">❄</span>}
                 {c.tk && <span className="text-orange-400">⬛</span>}
-                {xrayList && xrayList[c.cn] && <span className="bg-amber-500 text-slate-900 text-[9px] px-1 rounded font-bold">X-RAY</span>}
               </div>
               <div className="text-[11px] text-slate-400 mono mt-0.5">
                 {c.bay && `${fmtPos(c)} · `}{isoToLabel(c.iso)}
@@ -1722,7 +1776,7 @@ function VoyageStatsBox({ voyage }) {
     const s = {
       total: containers.length,
       dc20F: 0, dc20E: 0, dc40F: 0, dc40E: 0, hc40F: 0, hc40E: 0,
-      rf20F: 0, rf40F: 0,
+      rf20F: 0, rf40F: 0,  // 온도 있는 Full 리퍼만
       tk20: 0, tk40: 0, fr20: 0, fr40: 0, ot20: 0, ot40: 0,
       dg: 0, fr: 0, oog: 0,
       f: 0, e: 0, other: 0,
@@ -1739,12 +1793,23 @@ function VoyageStatsBox({ voyage }) {
       const isF = c.fe === 'F';
       const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
       
+      // 리퍼 처리:
+      // 1) 리퍼 + Full + 온도 있음 → RF 합산 (진짜 리퍼 운영)
+      // 2) 리퍼 + Empty 또는 온도 없음 → 일반 DC/HC 로 합산
       if (lbl === '20RF') {
-        if (isF && hasTmp) s.rf20F++;
-        else { if (isF) s.dc20F++; else s.dc20E++; }
+        if (isF && hasTmp) {
+          s.rf20F++;
+        } else {
+          // Empty 리퍼 또는 온도 없는 리퍼 → 20DC 로 카운트
+          if (isF) s.dc20F++; else s.dc20E++;
+        }
       } else if (lbl === '40RF') {
-        if (isF && hasTmp) s.rf40F++;
-        else { if (isF) s.hc40F++; else s.hc40E++; }
+        if (isF && hasTmp) {
+          s.rf40F++;
+        } else {
+          // Empty 리퍼 또는 온도 없는 리퍼 → 40HC 로 카운트 (40 리퍼는 보통 HC)
+          if (isF) s.hc40F++; else s.hc40E++;
+        }
       }
       else if (lbl === '20DC') { if (isF) s.dc20F++; else s.dc20E++; }
       else if (lbl === '40DC') { if (isF) s.dc40F++; else s.dc40E++; }
@@ -2107,16 +2172,6 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
       </button>
       {dischargeStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${dischargeStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : dischargeStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{dischargeStatus.msg}</div>}
     </div>}
-    {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
-      <div className="font-bold text-red-200 text-sm">3. X-RAY 리스트 (Excel) — 여러 개 동시 선택</div>
-      <input ref={xrayRef} type="file" multiple accept="*/*" onChange={e => handleXray(e.target.files)} style={{ display: 'none' }}/>
-      <button onClick={() => xrayRef.current?.click()}
-        className="w-full py-3 px-4 bg-red-500 hover:bg-red-400 active:bg-red-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
-        <Upload className="w-5 h-5"/>
-        파일 선택 (Excel / CSV)
-      </button>
-      {xrayStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${xrayStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : xrayStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{xrayStatus.msg}</div>}
-    </div>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
       <div className="font-bold text-sm mb-3">항차 목록 ({Object.keys(voyages).length}개) <span className="text-[10px] text-emerald-400">☁ Firebase</span></div>
       {Object.keys(voyages).length === 0 ? <div className="text-center text-slate-500 text-sm py-6">등록된 항차 없음</div> : <div className="space-y-1.5">{Object.values(voyages).map(v => <div key={v.key || v.vsl + v.voy} className={`p-2.5 rounded border flex items-center gap-2 ${(v.key || makeVoyageKey(v.vsl, v.voy, 'discharge')) === activeKey ? 'bg-amber-900/20 border-amber-600' : 'bg-slate-800/40 border-slate-700'}`}>
@@ -2161,7 +2216,7 @@ function DetailModal({ c, isDischarge, xrayMarked, toggleXray, completed, comple
         {c.oog && <span className="bg-purple-900/60 text-purple-200 px-2 py-1 rounded font-bold">📐 OOG</span>}
       </div>}
       <div className="space-y-2">
-        <button onClick={toggleXray} className={`w-full py-2 rounded font-bold text-sm ${xrayMarked ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-300'}`}>{xrayMarked ? '✓ X-RAY 대상' : 'X-RAY 표시'}</button>
+        
         {xrayMarked && <div className="bg-amber-900/20 border border-amber-700/40 rounded p-2.5 space-y-2">
           <div className="text-[10px] text-amber-200 font-bold">실 / E-SEAL</div>
           <input value={seal} onChange={e => setSeal(e.target.value)} onBlur={() => onSetXraySeal(seal, eseal)} placeholder="실 번호" className="w-full px-2 py-1.5 bg-slate-800 rounded text-xs mono"/>

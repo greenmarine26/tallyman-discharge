@@ -262,12 +262,12 @@ export function parseAscFile(text) {
     
     let tp = '', iso = '', fe = 'F', wt = 0;
     
-    // 형식 1: DC20234F (TYPE+WT3자리+F/E) - KKAK 형식
+    // 형식 1: DC20234F (TYPE2 + WT3 + F/E) - KKAK 형식
     let m1 = typeBlock.match(/^([A-Z]{2}\d{2})(\d{3})([FE])/);
-    // 형식 2: 20GP193F (ISO+WT3자리+F/E) - STSE 20피트 형식
+    // 형식 2: 20GP193F (ISO2글자숫자 + WT3 + F/E) - STSE 형식
     let m2 = typeBlock.match(/^(\d{2}[A-Z]{2})(\d{3})([FE])/);
-    // 형식 3: 40HC172F, 40HR265F, 40FP356F, 45OT179F (40/45 + 영문2 + 무게3 + F/E)
-    let m3 = typeBlock.match(/^(\d{2}[A-Z]{2})(\d{3})([FE])/);
+    // 형식 4: DCHC209F, RFHC265F (TYPE 4글자영문 + WT3 + F/E) - SWCP 형식  
+    let m4 = typeBlock.match(/^([A-Z]{4})(\d{3})([FE])/);
     
     if (m1) {
       tp = m1[1]; iso = m1[2] + 'GP'; fe = m1[3];
@@ -279,9 +279,26 @@ export function parseAscFile(text) {
       // KKAK 형식의 무게는 끝쪽 5자리
       const wtMatch = line.substring(54, 100).match(/(\d{5})/);
       wt = wtMatch ? parseInt(wtMatch[1]) : 0;
+    } else if (m4) {
+      // SWCP 형식: DCHC, RFHC, RFHQ 등 4글자 TYPE
+      tp = m4[1];
+      fe = m4[3];
+      // ISO 매핑
+      if (tp === 'DCHC') iso = '45GP';        // 40' DC High Cube
+      else if (tp === 'RFHC') iso = '45R1';   // 40' Reefer HC
+      else if (tp === 'RFHQ') iso = '45R1';
+      else if (tp === 'DCDC') iso = '42GP';   // 40' DC
+      else iso = tp;
+      // 무게: 같은 줄 끝쪽 5자리 우선
+      const wtMatch = line.substring(54, 100).match(/(\d{5})/);
+      if (wtMatch) {
+        wt = parseInt(wtMatch[1]);
+      } else {
+        // 없으면 m4[2] * 100
+        wt = parseInt(m4[2]) * 100;
+      }
     } else if (m2) {
-      // STSE 형식 (20피트 또는 40피트 모두): 20GP193F, 40HC172F, 40HR265F, 40FP356F, 45OT179F
-      // m2[1] = "20GP" / "40HC" / "40HR" / "40FP" / "45OT" 그대로 ISO 로 사용
+      // STSE 형식: 20GP193F, 40HC172F, 40HR265F, 40FP356F, 45OT179F
       iso = m2[1];
       wt = parseInt(m2[2]) * 100;
       fe = m2[3];
