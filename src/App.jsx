@@ -269,16 +269,21 @@ export default function App() {
   };
   
   // 양하 리스트 누적 합산
-  const applyDischargeList = async (key, newRecords) => {
+  const applyDischargeList = async (key, newRecords, isReplace = false) => {
     try {
-      const existing = voyagesAll[key];
-      const existingRecords = existing?.dischargeRecords || [];
-      
-      // 컨번호 기준 합치기
-      const cnMap = {};
-      for (const r of existingRecords) cnMap[r.cn] = r;
-      for (const r of newRecords) cnMap[r.cn] = { ...cnMap[r.cn], ...r };
-      const merged = Object.values(cnMap);
+      let merged;
+      if (isReplace) {
+        // 이미 메모리에서 누적된 전체 리스트로 교체
+        merged = newRecords;
+      } else {
+        // 누적 합산 (단일 파일)
+        const existing = voyagesAll[key];
+        const existingRecords = existing?.dischargeRecords || [];
+        const cnMap = {};
+        for (const r of existingRecords) cnMap[r.cn] = r;
+        for (const r of newRecords) cnMap[r.cn] = { ...cnMap[r.cn], ...r };
+        merged = Object.values(cnMap);
+      }
       
       await fbUpdateVoyage(key, { dischargeRecords: merged });
       return { total: merged.length, added: newRecords.length };
@@ -623,10 +628,10 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
   
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   
-  // 평택 양하 대상 = POD 가 PTK 또는 KRPTK 로 끝나는 컨
+  // 평택 양하 대상 = POL 이 PTK 또는 KRPTK
   const isPtk = (c) => {
-    const pod = (c.pod || '').toUpperCase();
-    return pod === 'PTK' || pod === 'KRPTK' || pod.endsWith('PTK');
+    const pol = (c.pol || '').toUpperCase();
+    return pol === 'PTK' || pol === 'KRPTK' || pol.endsWith('PTK');
   };
   
   // 마우스/터치 드래그 + 휠 + 핀치 줌
@@ -1877,8 +1882,9 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     setEdiStatus({ loading: true, msg: `${files.length}개 파일 처리 중...` });
     
     const results = [];
-    let totalAdded = 0;
-    let lastVoyageKey = null;
+    
+    // 1단계: 모든 파일 파싱해서 항차별로 누적
+    const voyageGroups = {}; // key: voyageKey
     
     for (let idx = 0; idx < files.length; idx++) {
       const file = files[idx];
@@ -1897,20 +1903,49 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
           results.push(`❌ ${file.name}: 컨테이너 없음`);
           continue;
         }
-        const result = await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '', fileType);
-        if (result) {
-          totalAdded += result.added;
-          lastVoyageKey = result.key;
-          results.push(`✅ [${fileType}] ${r.vsl} ${r.voy}: +${result.added}대`);
+        const vsl = r.vsl || file.name.replace(/\.[^.]+$/, '');
+        const voy = r.voy || '0000';
+        const groupKey = `${vsl}|${voy}`;
+        
+        if (!voyageGroups[groupKey]) {
+          voyageGroups[groupKey] = {
+            vsl, voy, etd: r.etd || '', pol: r.pol || '',
+            allContainers: [],
+            sources: [],
+          };
         }
+        voyageGroups[groupKey].allContainers.push(...r.containers);
+        if (!voyageGroups[groupKey].sources.includes(fileType)) {
+          voyageGroups[groupKey].sources.push(fileType);
+        }
+        results.push(`✅ [${fileType}] ${vsl} ${voy}: +${r.containers.length}대`);
       } catch (e) {
         results.push(`❌ ${file.name}: ${e.message}`);
       }
     }
     
+    // 2단계: 항차별로 한 번씩만 addVoyage 호출 (누적은 addVoyage 안에서)
+    let totalAdded = 0;
+    for (const [groupKey, group] of Object.entries(voyageGroups)) {
+      try {
+        // 그룹 안에서 중복 컨번호는 미리 dedupe
+        const cnMap = {};
+        for (const c of group.allContainers) cnMap[c.cn] = { ...cnMap[c.cn], ...c };
+        const dedup = Object.values(cnMap);
+        
+        // 각 source 별로 한 번씩 호출하면 그게 합쳐짐
+        for (const src of group.sources) {
+          const result = await addVoyage(group.vsl, group.voy, dedup, group.etd, group.pol, src);
+          if (result) totalAdded = result.total;
+        }
+      } catch (e) {
+        results.push(`❌ ${group.vsl} ${group.voy}: ${e.message}`);
+      }
+    }
+    
     setEdiStatus({ 
       ok: true, 
-      msg: `${files.length}개 파일 완료 (총 +${totalAdded}대)\n${results.join('\n')}`
+      msg: `${files.length}개 파일 완료 (총 ${totalAdded}대)\n${results.join('\n')}`
     });
     
     if (ediRef.current) ediRef.current.value = '';
@@ -1926,32 +1961,46 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     setDischargeStatus({ loading: true, msg: `${files.length}개 파일 처리 중...` });
     
     const results = [];
-    let totalAdded = 0;
+    
+    // 1단계: 메모리에서 모든 파일 누적 (Firebase 한 번만 저장)
+    const existing = voyages[activeKey];
+    const existingRecords = existing?.dischargeRecords || [];
+    const cnMap = {};
+    for (const r of existingRecords) cnMap[r.cn] = r;
     
     for (let idx = 0; idx < files.length; idx++) {
       const file = files[idx];
       try {
-        setDischargeStatus({ loading: true, msg: `[${idx + 1}/${files.length}] ${file.name}` });
+        setDischargeStatus({ loading: true, msg: `[${idx + 1}/${files.length}] ${file.name} 파싱 중...` });
         const buf = await file.arrayBuffer();
         const { records } = await parseListExcel(buf);
         if (records.length === 0) {
           results.push(`❌ ${file.name}: 데이터 없음`);
           continue;
         }
-        const result = await applyDischargeList(activeKey, records);
-        if (result) {
-          totalAdded += result.added;
-          results.push(`✅ ${file.name}: +${result.added}대`);
+        // 메모리에 누적 (state 의존 X)
+        let added = 0;
+        for (const r of records) {
+          if (!cnMap[r.cn]) added++;
+          cnMap[r.cn] = { ...cnMap[r.cn], ...r };
         }
+        results.push(`✅ ${file.name}: +${records.length}대 (신규 ${added})`);
       } catch (e) {
         results.push(`❌ ${file.name}: ${e.message}`);
       }
     }
     
-    setDischargeStatus({ 
-      ok: true, 
-      msg: `${files.length}개 파일 완료 (총 +${totalAdded}대)\n${results.join('\n')}`
-    });
+    // 2단계: 한 번에 저장
+    try {
+      const result = await applyDischargeList(activeKey, Object.values(cnMap), true);
+      const merged = Object.values(cnMap);
+      setDischargeStatus({ 
+        ok: true, 
+        msg: `${files.length}개 파일 완료 (전체 ${merged.length}대)\n${results.join('\n')}`
+      });
+    } catch (e) {
+      setDischargeStatus({ ok: false, msg: `저장 실패: ${e.message}` });
+    }
     
     if (dischargeRef.current) dischargeRef.current.value = '';
   };
