@@ -628,10 +628,10 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
   
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   
-  // 평택 양하 대상 = POL 이 PTK 또는 KRPTK
+  // 평택 양하 대상 = POD (목적지) 이 PTK 또는 KRPTK
   const isPtk = (c) => {
-    const pol = (c.pol || '').toUpperCase();
-    return pol === 'PTK' || pol === 'KRPTK' || pol.endsWith('PTK');
+    const pod = (c.pod || '').toUpperCase();
+    return pod === 'PTK' || pod === 'KRPTK' || pod.endsWith('PTK');
   };
   
   // 마우스/터치 드래그 + 휠 + 핀치 줌
@@ -767,26 +767,41 @@ function BayTab({ ediContainers, dischargeCns, xrayList, setSelectedCn, complete
     
     const out = [];
     
-    // 짝수 베이 1번부터 maxBay 까지 (홀수 베이는 짝수 베이와 함께 표시)
-    for (let n = 1; n <= maxBay; n++) {
-      // 짝수 베이가 메인, 홀수는 짝수+1
-      // 일반적으로 컨테이너 베이는 홀수가 20', 짝수가 40' (홀수 두개 = 짝수 한개)
+    // 짝수 베이 2번부터 maxBay 까지
+    // 규칙: 짝수 베이 (40ft) 는 자기 단독 또는 +1 홀수 (20ft) 와 페어
+    //       짝수 베이가 통로 (ASC 에 없음) 면 그 다음 홀수 베이는 단독 페이지
+    const usedOddBays = new Set();
+    for (let n = 2; n <= maxBay; n++) {
       if (n % 2 === 0) {
-        // 짝수 베이 페이지 (홀수 베이 = 같은 페이지)
         const evenStr = String(n).padStart(bayLen, '0');
-        const oddBefore = String(n - 1).padStart(bayLen, '0');
         const oddAfter = String(n + 1).padStart(bayLen, '0');
-        
         const hasEven = bays.includes(evenStr);
         const hasOdd = bays.includes(oddAfter);
         
-        // 데이터가 있는 베이만 표시할지, 빈 베이도 표시할지
-        // → 빈 베이도 표시
+        // 둘 다 없으면 통로 → 페이지 안 만듦
+        if (!hasEven && !hasOdd) continue;
+        
+        // 짝수 베이 (40ft) 가 있으면 → 페어 페이지 (자기 + 다음 홀수)
+        if (hasEven) {
+          out.push({
+            title: `BAY ${evenStr}${hasOdd ? ` / ${oddAfter}` : ''}`,
+            evenBay: evenStr,
+            oddBay: hasOdd ? oddAfter : null,
+            isEmpty: false,
+          });
+          if (hasOdd) usedOddBays.add(oddAfter);
+        }
+        // 짝수 베이가 통로 (ASC 에 없음) 면 → 다음 홀수 베이는 단독으로 (다음 루프에서 처리)
+      } else {
+        // 홀수 베이 단독 처리 (짝수 짝궁이 없는 경우만)
+        const oddStr = String(n).padStart(bayLen, '0');
+        if (!bays.includes(oddStr)) continue;
+        if (usedOddBays.has(oddStr)) continue; // 이미 페어로 처리됨
         out.push({
-          title: `BAY ${evenStr}${hasOdd || bays.includes(oddAfter) ? ` / ${oddAfter}` : ''}`,
-          evenBay: evenStr,
-          oddBay: oddAfter,
-          isEmpty: !hasEven && !hasOdd,
+          title: `BAY ${oddStr}`,
+          evenBay: null,
+          oddBay: oddStr,
+          isEmpty: false,
         });
       }
     }
@@ -2039,6 +2054,19 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
           results.push(`❌ ${file.name}: 컨테이너 없음`);
           continue;
         }
+        
+        // V32: 양하앱 = POD 가 PTK/KRPTK 인 컨테이너만 (평택 양하 대상)
+        const totalCount = r.containers.length;
+        r.containers = r.containers.filter(c => {
+          const pod = (c.pod || '').toUpperCase();
+          return pod === 'PTK' || pod === 'KRPTK' || pod.endsWith('PTK');
+        });
+        const filteredCount = r.containers.length;
+        
+        if (r.containers.length === 0) {
+          results.push(`❌ ${file.name}: 평택 양하 대상 없음 (전체 ${totalCount}대)`);
+          continue;
+        }
         const vsl = r.vsl || file.name.replace(/\.[^.]+$/, '');
         const voy = r.voy || '0000';
         const groupKey = `${vsl}|${voy}`;
@@ -2054,7 +2082,7 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
         if (!voyageGroups[groupKey].sources.includes(fileType)) {
           voyageGroups[groupKey].sources.push(fileType);
         }
-        results.push(`✅ [${fileType}] ${vsl} ${voy}: +${r.containers.length}대`);
+        results.push(`✅ [${fileType}] ${vsl} ${voy}: 평택 양하 ${filteredCount}대 (전체 ${totalCount}대)`);
       } catch (e) {
         results.push(`❌ ${file.name}: ${e.message}`);
       }
