@@ -148,20 +148,67 @@ export default function App() {
     try { await fbSetXraySeal(activeKey, cn, seal, eseal); } catch (e) { alert('실패: ' + e.message); }
   };
   
-  const addVoyage = async (vsl, voy, ediContainers, etd = '', pol = '') => {
+  // 항차 추가 (또는 기존 항차에 누적 합산)
+  const addVoyage = async (vsl, voy, newContainers, etd = '', pol = '', source = 'EDI') => {
     const key = makeVoyageKey(vsl, voy, 'discharge');
     try {
+      // 기존 항차 있으면 누적 합산
+      const existing = voyagesAll[key];
+      let mergedContainers = newContainers;
+      let sources = [source];
+      
+      if (existing && existing.ediContainers) {
+        // 컨번호 기준 합치기 (덮어쓰기 — 새 정보가 우선)
+        const cnMap = {};
+        // 기존 컨테이너 먼저
+        for (const c of existing.ediContainers) {
+          cnMap[c.cn] = { ...c };
+        }
+        // 새 컨테이너로 덮어쓰거나 추가 (원본 source 유지)
+        for (const c of newContainers) {
+          if (cnMap[c.cn]) {
+            // 둘 다 있으면 source 표시 (비교용)
+            cnMap[c.cn] = { ...cnMap[c.cn], ...c, _sources: [...new Set([...(cnMap[c.cn]._sources || [cnMap[c.cn]._source || 'OLD']), source])] };
+          } else {
+            cnMap[c.cn] = { ...c, _source: source, _sources: [source] };
+          }
+        }
+        mergedContainers = Object.values(cnMap);
+        sources = [...new Set([...(existing.sources || []), source])];
+      } else {
+        // 새 항차 - source 표시
+        mergedContainers = newContainers.map(c => ({ ...c, _source: source, _sources: [source] }));
+      }
+      
       await fbAddVoyage(key, {
         vsl, voy, etd, pol, type: 'discharge',
-        ediContainers, dischargeRecords: [],
+        ediContainers: mergedContainers,
+        dischargeRecords: existing?.dischargeRecords || [],
+        sources,
       });
       saveActive(key);
-      return key;
+      return { key, total: mergedContainers.length, added: newContainers.length };
     } catch (e) { alert('등록 실패: ' + e.message); }
   };
-  const applyDischargeList = async (key, records) => {
-    try { await fbUpdateVoyage(key, { dischargeRecords: records }); }
-    catch (e) { alert('실패: ' + e.message); }
+  
+  // 양하 리스트 누적 합산
+  const applyDischargeList = async (key, newRecords) => {
+    try {
+      const existing = voyagesAll[key];
+      const existingRecords = existing?.dischargeRecords || [];
+      
+      // 컨번호 기준 합치기
+      const cnMap = {};
+      for (const r of existingRecords) cnMap[r.cn] = r;
+      for (const r of newRecords) cnMap[r.cn] = { ...cnMap[r.cn], ...r };
+      const merged = Object.values(cnMap);
+      
+      await fbUpdateVoyage(key, { dischargeRecords: merged });
+      return { total: merged.length, added: newRecords.length };
+    } catch (e) { 
+      alert('실패: ' + e.message); 
+      return null;
+    }
   };
   const deleteVoyage = async (key) => {
     if (!confirm(`항차 "${voyagesAll[key]?.vsl} ${voyagesAll[key]?.voy}" 를 Firebase 에서 삭제하시겠습니까?\n\n⚠ 모든 검수원의 데이터가 삭제됩니다`)) return;
@@ -1517,6 +1564,194 @@ function VesselTracker({ vsl }) {
   );
 }
 
+// === 항차 통계 박스 (검증 + 종류별 갯수) ===
+function VoyageStatsBox({ voyage }) {
+  const containers = voyage.ediContainers || [];
+  const records = voyage.dischargeRecords || [];
+  const sources = voyage.sources || [];
+  
+  // EDI/ASC 비교 결과
+  const comparison = useMemo(() => {
+    const result = {
+      hasEdi: sources.includes('EDI'),
+      hasAsc: sources.includes('ASC'),
+      onlyEdi: 0, // EDI 만 있는 컨
+      onlyAsc: 0, // ASC 만 있는 컨
+      both: 0,    // 둘 다 있는 컨
+      diff: [],   // 정보 다른 컨
+    };
+    if (!result.hasEdi || !result.hasAsc) return result;
+    for (const c of containers) {
+      const cs = c._sources || [c._source];
+      if (cs.includes('EDI') && cs.includes('ASC')) result.both++;
+      else if (cs.includes('EDI')) result.onlyEdi++;
+      else if (cs.includes('ASC')) result.onlyAsc++;
+    }
+    return result;
+  }, [containers, sources]);
+  
+  // 양하리스트 ↔ EDI/ASC 비교 (선사별)
+  const listValidation = useMemo(() => {
+    if (records.length === 0) return null;
+    
+    const ediCns = new Set(containers.map(c => c.cn));
+    const result = {
+      total: records.length,
+      matched: 0,        // EDI 에도 있음
+      missing: [],       // EDI 에 없음 (선사별 그룹)
+      missingByCarrier: {},
+    };
+    
+    for (const r of records) {
+      if (ediCns.has(r.cn)) {
+        result.matched++;
+      } else {
+        const carrier = r.op || r.carrier || 'UNKNOWN';
+        if (!result.missingByCarrier[carrier]) result.missingByCarrier[carrier] = 0;
+        result.missingByCarrier[carrier]++;
+        result.missing.push(r);
+      }
+    }
+    return result;
+  }, [containers, records]);
+  
+  // 화물 종류별 통계
+  const stats = useMemo(() => {
+    const s = {
+      total: containers.length,
+      dc20F: 0, dc20E: 0, dc40F: 0, dc40E: 0, hc40F: 0, hc40E: 0,
+      rf: 0, dg: 0, tk: 0, fr: 0, oog: 0,
+      f: 0, e: 0,
+    };
+    for (const c of containers) {
+      if (c.fe === 'F') s.f++;
+      else s.e++;
+      
+      if (c.dg) s.dg++;
+      if (c.rf) s.rf++;
+      if (c.tk) s.tk++;
+      if (c.fr) s.fr++;
+      if (c.oog) s.oog++;
+      
+      const lbl = isoToLabel(c.iso);
+      const isF = c.fe === 'F';
+      if (lbl === '20DC' || lbl === '20GP') {
+        if (isF) s.dc20F++; else s.dc20E++;
+      } else if (lbl === '40DC' || lbl === '40GP') {
+        if (isF) s.dc40F++; else s.dc40E++;
+      } else if (lbl === '40HC') {
+        if (isF) s.hc40F++; else s.hc40E++;
+      }
+    }
+    return s;
+  }, [containers]);
+  
+  // 표시할 게 없으면 숨김
+  if (containers.length === 0 && records.length === 0) return null;
+  
+  return (
+    <div className="space-y-2">
+      {/* EDI/ASC 비교 */}
+      {comparison.hasEdi && comparison.hasAsc && (
+        <div className={`rounded-lg p-3 border ${comparison.onlyEdi === 0 && comparison.onlyAsc === 0 ? 'bg-emerald-900/30 border-emerald-700' : 'bg-orange-900/30 border-orange-700'}`}>
+          <div className="text-xs font-bold mb-1 flex items-center gap-2">
+            {comparison.onlyEdi === 0 && comparison.onlyAsc === 0 
+              ? <span className="text-emerald-300">✅ EDI ↔ ASC 일치</span>
+              : <span className="text-orange-300">⚠ EDI ↔ ASC 차이 발견</span>}
+          </div>
+          <div className="text-[11px] mono space-y-0.5">
+            <div>둘 다: <span className="text-emerald-300 font-bold">{comparison.both}</span>대</div>
+            {comparison.onlyEdi > 0 && <div>EDI 만: <span className="text-orange-300 font-bold">{comparison.onlyEdi}</span>대 (ASC 빠짐)</div>}
+            {comparison.onlyAsc > 0 && <div>ASC 만: <span className="text-orange-300 font-bold">{comparison.onlyAsc}</span>대 (EDI 빠짐)</div>}
+          </div>
+        </div>
+      )}
+      
+      {/* 양하리스트 검증 */}
+      {listValidation && (
+        <div className={`rounded-lg p-3 border ${listValidation.missing.length === 0 ? 'bg-emerald-900/30 border-emerald-700' : 'bg-red-900/30 border-red-700'}`}>
+          <div className="text-xs font-bold mb-1">
+            {listValidation.missing.length === 0
+              ? <span className="text-emerald-300">✅ 양하리스트 ↔ EDI/ASC 일치 ({listValidation.matched}대)</span>
+              : <span className="text-red-300">⚠ 양하리스트 컨테이너 누락 발견</span>}
+          </div>
+          {listValidation.missing.length > 0 && (
+            <div className="text-[11px] mono space-y-0.5">
+              <div className="text-red-200">매칭: {listValidation.matched}/{listValidation.total}대</div>
+              <div className="text-red-300 font-bold mt-1">선사별 누락:</div>
+              {Object.entries(listValidation.missingByCarrier).map(([c, n]) => (
+                <div key={c} className="text-orange-200">• {c}: {n}대 부족</div>
+              ))}
+              <div className="text-[10px] text-red-300/70 mt-1">→ 해당 선사 ASC/EDI 추가 업로드 필요</div>
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* 종류별 통계 */}
+      {containers.length > 0 && (
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-3">
+          <div className="text-xs font-bold text-blue-200 mb-2">📊 화물 종류별 통계 (전체 {stats.total}대)</div>
+          
+          <div className="grid grid-cols-3 gap-1.5 mb-2">
+            <div className="bg-slate-800 rounded p-1.5 text-center">
+              <div className="text-[10px] text-slate-400">20DC F/E</div>
+              <div className="text-sm font-bold mono">
+                <span className="text-emerald-300">{stats.dc20F}</span>
+                <span className="text-slate-500 text-[10px]"> / </span>
+                <span className="text-slate-400">{stats.dc20E}</span>
+              </div>
+            </div>
+            <div className="bg-slate-800 rounded p-1.5 text-center">
+              <div className="text-[10px] text-slate-400">40DC F/E</div>
+              <div className="text-sm font-bold mono">
+                <span className="text-emerald-300">{stats.dc40F}</span>
+                <span className="text-slate-500 text-[10px]"> / </span>
+                <span className="text-slate-400">{stats.dc40E}</span>
+              </div>
+            </div>
+            <div className="bg-slate-800 rounded p-1.5 text-center">
+              <div className="text-[10px] text-slate-400">40HC F/E</div>
+              <div className="text-sm font-bold mono">
+                <span className="text-emerald-300">{stats.hc40F}</span>
+                <span className="text-slate-500 text-[10px]"> / </span>
+                <span className="text-slate-400">{stats.hc40E}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-5 gap-1">
+            {stats.rf > 0 && <div className="bg-cyan-900/50 border border-cyan-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-cyan-300">❄ RF</div>
+              <div className="text-sm font-bold mono text-cyan-200">{stats.rf}</div>
+            </div>}
+            {stats.dg > 0 && <div className="bg-red-900/50 border border-red-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-red-300">🔥 DG</div>
+              <div className="text-sm font-bold mono text-red-200">{stats.dg}</div>
+            </div>}
+            {stats.tk > 0 && <div className="bg-orange-900/50 border border-orange-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-orange-300">⬛ TK</div>
+              <div className="text-sm font-bold mono text-orange-200">{stats.tk}</div>
+            </div>}
+            {stats.fr > 0 && <div className="bg-purple-900/50 border border-purple-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-purple-300">🔲 FR</div>
+              <div className="text-sm font-bold mono text-purple-200">{stats.fr}</div>
+            </div>}
+            {stats.oog > 0 && <div className="bg-pink-900/50 border border-pink-700/50 rounded p-1.5 text-center">
+              <div className="text-[10px] text-pink-300">📐 OOG</div>
+              <div className="text-sm font-bold mono text-pink-200">{stats.oog}</div>
+            </div>}
+          </div>
+          
+          {sources.length > 0 && (
+            <div className="text-[10px] text-slate-500 mt-2">자료 소스: {sources.join(' + ')}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, applyDischargeList, addXrayBulk }) {
   const [ediStatus, setEdiStatus] = useState(null);
   const [dischargeStatus, setDischargeStatus] = useState(null);
@@ -1538,8 +1773,13 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
         r = parseBAPLIE(text);
       }
       if (r.containers.length === 0) { setEdiStatus({ ok: false, msg: `${fileType} 컨테이너 없음` }); return; }
-      await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '');
-      setEdiStatus({ ok: true, msg: `[${fileType}] ${r.vsl} ${r.voy} — ${r.containers.length}대 (Firebase 등록)` });
+      const result = await addVoyage(r.vsl || file.name.replace(/\.[^.]+$/, ''), r.voy || '0000', r.containers, r.etd || '', r.pol || '', fileType);
+      if (result) {
+        const msg = result.total > result.added 
+          ? `[${fileType}] ${r.vsl} ${r.voy} — 추가 ${result.added}대 (전체 ${result.total}대)`
+          : `[${fileType}] ${r.vsl} ${r.voy} — ${result.added}대 등록`;
+        setEdiStatus({ ok: true, msg });
+      }
     } catch (e) { setEdiStatus({ ok: false, msg: '실패: ' + e.message }); }
     if (ediRef.current) ediRef.current.value = '';
   };
@@ -1550,8 +1790,13 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
       const buf = await file.arrayBuffer();
       const { records } = await parseListExcel(buf);
       if (records.length === 0) { setDischargeStatus({ ok: false, msg: '없음' }); return; }
-      await applyDischargeList(activeKey, records);
-      setDischargeStatus({ ok: true, msg: `${records.length}대 양하 등록` });
+      const result = await applyDischargeList(activeKey, records);
+      if (result) {
+        const msg = result.total > result.added
+          ? `+${result.added}대 (전체 양하 ${result.total}대)`
+          : `${result.added}대 양하 등록`;
+        setDischargeStatus({ ok: true, msg });
+      }
     } catch (e) { setDischargeStatus({ ok: false, msg: '실패: ' + e.message }); }
     if (dischargeRef.current) dischargeRef.current.value = '';
   };
@@ -1571,9 +1816,12 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
     <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-3 flex items-start gap-2">
       <Cloud className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5"/>
       <div className="text-xs text-blue-200/80">
-        ☁ Firebase 실시간 동기화. 모든 검수원이 같은 항차 데이터를 공유합니다.
+        ☁ Firebase 실시간 동기화. 같은 선박/항차로 여러 ASC/EDI/리스트 올리면 <b>자동 합산</b>됩니다.
       </div>
     </div>
+    
+    {/* 활성 항차 통계 + 검증 */}
+    {activeKey && voyages[activeKey] && <VoyageStatsBox voyage={voyages[activeKey]}/>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
       <div className="font-bold text-blue-200 text-sm">1. 양하 자료 (ASC / EDI / TXT 자동 인식)</div>
       <input ref={ediRef} type="file" accept="*/*" onChange={e => handleEdi(e.target.files?.[0])} style={{ display: 'none' }}/>
