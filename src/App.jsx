@@ -2231,6 +2231,16 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
       </button>
       {dischargeStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${dischargeStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : dischargeStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{dischargeStatus.msg}</div>}
     </div>}
+    {activeKey && <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">
+      <div className="font-bold text-purple-200 text-sm">3. X-RAY 리스트 (Excel) — 여러 개 동시 선택</div>
+      <input ref={xrayRef} type="file" multiple accept="*/*" onChange={e => handleXray(e.target.files)} style={{ display: 'none' }}/>
+      <button onClick={() => xrayRef.current?.click()}
+        className="w-full py-3 px-4 bg-purple-500 hover:bg-purple-400 active:bg-purple-600 text-slate-900 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+        <Upload className="w-5 h-5"/>
+        X-RAY 파일 선택
+      </button>
+      {xrayStatus && <div className={`text-xs px-2 py-1.5 rounded mono whitespace-pre-line ${xrayStatus.ok ? 'bg-emerald-900/40 text-emerald-200' : xrayStatus.loading ? 'bg-slate-800 text-slate-300' : 'bg-red-900/40 text-red-200'}`}>{xrayStatus.msg}</div>}
+    </div>}
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
       <div className="font-bold text-sm mb-3">항차 목록 ({Object.keys(voyages).length}개) <span className="text-[10px] text-emerald-400">☁ Firebase</span></div>
       {Object.keys(voyages).length === 0 ? <div className="text-center text-slate-500 text-sm py-6">등록된 항차 없음</div> : <div className="space-y-1.5">{Object.values(voyages).map(v => <div key={v.key || v.vsl + v.voy} className={`p-2.5 rounded border flex items-center gap-2 ${(v.key || makeVoyageKey(v.vsl, v.voy, 'discharge')) === activeKey ? 'bg-amber-900/20 border-amber-600' : 'bg-slate-800/40 border-slate-700'}`}>
@@ -2245,7 +2255,8 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
 }
 
 function DetailModal({ c, isDischarge, xrayMarked, toggleXray, completed, completedInfo, onComplete, onCancelComplete, xraySeal, onSetXraySeal, onClose }) {
-  const [seal, setSeal] = useState(xraySeal.seal || '');
+  // 실번호: 수정된 값 (xraySeal) 우선, 없으면 양하리스트 (c.sl)
+  const [seal, setSeal] = useState(xraySeal.seal || c.sl || '');
   const [eseal, setEseal] = useState(xraySeal.eseal || '');
   return <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-3 overflow-y-auto" onClick={onClose}>
     <div className="bg-slate-900 border border-slate-700 rounded-lg max-w-md w-full p-4 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -2260,10 +2271,20 @@ function DetailModal({ c, isDischarge, xrayMarked, toggleXray, completed, comple
       <div className="grid grid-cols-2 gap-2 text-xs bg-slate-800/50 rounded p-2.5">
         {c.pol && <div><span className="text-slate-400">POL:</span> <span className="mono font-bold">{c.pol}</span></div>}
         {c.pod && <div><span className="text-slate-400">POD:</span> <span className="mono font-bold">{c.pod}</span></div>}
-        {c.sl && <div className="col-span-2"><span className="text-slate-400">실:</span> <span className="mono font-bold text-amber-200">{c.sl}</span></div>}
         {c.bl && <div className="col-span-2"><span className="text-slate-400">B/L:</span> <span className="mono">{c.bl}</span></div>}
         {c.op && <div><span className="text-slate-400">선사:</span> {c.op}</div>}
         {c.tmp && <div><span className="text-slate-400">온도:</span> <span className="text-cyan-300 font-bold">{c.tmp}°C</span></div>}
+      </div>
+      
+      {/* 실번호 (수정 가능) - 양하리스트의 원본 실번호 + 현장 수정 */}
+      <div className="bg-amber-900/20 border border-amber-700/40 rounded p-2.5 space-y-1">
+        <div className="text-[10px] text-amber-200 font-bold">실 번호 (현장에서 다르면 수정)</div>
+        <input value={seal} onChange={e => setSeal(e.target.value)} onBlur={() => onSetXraySeal(seal, eseal)} 
+          placeholder={c.sl || '실 번호 입력'} 
+          className="w-full px-2 py-2 bg-slate-800 rounded text-sm mono font-bold text-amber-200"/>
+        {c.sl && seal && c.sl !== seal && (
+          <div className="text-[10px] text-orange-300">⚠ 원본: {c.sl} → 수정됨: {seal}</div>
+        )}
       </div>
       {(c.dg || c.rf || c.tk || c.oog) && <div className="flex flex-wrap gap-1 text-xs">
         {c.dg && <span className="bg-red-900/60 text-red-200 px-2 py-1 rounded font-bold">🔥 DG {c.un && `UN${c.un}`}</span>}
@@ -2276,9 +2297,8 @@ function DetailModal({ c, isDischarge, xrayMarked, toggleXray, completed, comple
       </div>}
       <div className="space-y-2">
         
-        {xrayMarked && <div className="bg-amber-900/20 border border-amber-700/40 rounded p-2.5 space-y-2">
-          <div className="text-[10px] text-amber-200 font-bold">실 / E-SEAL</div>
-          <input value={seal} onChange={e => setSeal(e.target.value)} onBlur={() => onSetXraySeal(seal, eseal)} placeholder="실 번호" className="w-full px-2 py-1.5 bg-slate-800 rounded text-xs mono"/>
+        {xrayMarked && <div className="bg-purple-900/20 border border-purple-700/40 rounded p-2.5 space-y-2">
+          <div className="text-[10px] text-purple-200 font-bold">🔍 X-RAY 검사 - E-SEAL</div>
           <input value={eseal} onChange={e => setEseal(e.target.value)} onBlur={() => onSetXraySeal(seal, eseal)} placeholder="E-SEAL 4자리" className="w-full px-2 py-1.5 bg-slate-800 rounded text-xs mono"/>
         </div>}
       </div>
