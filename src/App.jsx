@@ -194,8 +194,8 @@ export default function App() {
       if (isFourDigit) return cn.endsWith(q);
       return cn.includes(q) || (c.sl || '').toUpperCase().includes(q) || (c.bl || '').toUpperCase().includes(q);
     };
-    return ediContainers.filter(matchFn).slice(0, 50);
-  }, [query, ediContainers]);
+    return ediContainersFinal.filter(matchFn).slice(0, 50);
+  }, [query, ediContainersFinal]);
   
   const completeContainer = async (cn, damaged = false) => {
     if (!activeKey || !inspector) {
@@ -303,7 +303,7 @@ export default function App() {
   const isCompleted = (cn) => !!completedMap[cn];
   const completedInfo = (cn) => completedMap[cn];
   
-  const selected = selectedCn ? ediContainers.find(c => c.cn === selectedCn) || dischargeList.find(c => c.cn === selectedCn) : null;
+  const selected = selectedCn ? ediContainersFinal.find(c => c.cn === selectedCn) || dischargeList.find(c => c.cn === selectedCn) : null;
   
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
