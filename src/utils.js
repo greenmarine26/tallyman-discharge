@@ -40,8 +40,9 @@ export const isoToLabel = (iso) => {
   // 40' Flat Rack: 40FP, 40FR, 4[24]P
   if (/^40F[PR]/.test(p)) return '40FR';
   if (/^4[24]P/.test(p)) return '40FR';
-  // 45' Open Top: 45OT, 45OH, 4[24]U
+  // 45' Open Top: 45OT, 45OH, 4[24]U, 40OH
   if (/^4[245]O/.test(p)) return '40OT';
+  if (/^40O/.test(p)) return '40OT';
   if (/^4[24]U/.test(p)) return '40OT';
   // 40' Tank: 40TK, 4[24]T
   if (/^40T/.test(p)) return '40TK';
@@ -540,7 +541,16 @@ export async function parseListExcel(arrayBuffer) {
       const isDg = dgVal && /^(Y|YES|TRUE|1|DG|HAZ)/i.test(dgVal);
       
       const tmpVal = tmp_i >= 0 ? String(row[tmp_i] || '').trim() : '';
-      const isRf = tmpVal && tmpVal !== '0' && tmpVal !== '-';
+      // V35: ISO 코드에 R 있으면 자동 리퍼 (45RE, 22RE 등)
+      const isoUpper = (iso || isoRaw || '').toUpperCase();
+      const isRf = (tmpVal && tmpVal !== '0' && tmpVal !== '-') || /^[24][245]R/.test(isoUpper) || /^[24]0R/.test(isoUpper);
+      
+      // ISO 자동 추론 강화: 45RE, 22RE, 42PC, 40OH 등 raw 그대로 저장 (이미 위에서 처리)
+      
+      // 특수화물 자동 감지
+      const isFr = /^[24][024]P/.test(isoUpper) || /^[24]0F[PR]/.test(isoUpper);
+      const isOt = /^[24][024]U/.test(isoUpper) || /^[24]0O/.test(isoUpper) || /^45O/.test(isoUpper);
+      const isTk = /^[24][024]T/.test(isoUpper);
       
       records.push({
         cn, l4: cn.slice(-4),
@@ -551,11 +561,14 @@ export async function parseListExcel(arrayBuffer) {
         wt: wt_i >= 0 ? (parseInt(String(row[wt_i] || '').replace(/,/g, '')) || 0) : 0,
         pol: pol_i >= 0 ? String(row[pol_i] || '').trim() : '',
         pod: pod_i >= 0 ? String(row[pod_i] || '').trim() : '',
-        fe, // 리스트에서 직접 가져온 F/E (있으면)
-        iso, // 리스트에서 직접 가져온 타입 (있으면)
+        fe,
+        iso,
         op: op_i >= 0 ? String(row[op_i] || '').trim() : '',
         dg: isDg,
         rf: isRf,
+        fr: isFr,
+        ot: isOt,
+        tk: isTk,
         tmp: tmpVal,
       });
     }

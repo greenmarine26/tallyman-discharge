@@ -464,20 +464,32 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
   
   // 화물 종류별 카운트
   const cargoCounts = useMemo(() => {
-    const counts = { dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, hc: 0, dc20: 0, dc40: 0 };
+    const counts = { 
+      dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, 
+      hc: 0, dc20: 0, dc40: 0,
+      rf20: 0, rf40: 0, fr20: 0, fr40: 0, ot20: 0, ot40: 0, tk20: 0, tk40: 0
+    };
     for (const c of list) {
       if (c.dg) counts.dg++;
-      // 리퍼는 온도 있고 Full 만 카운트
       const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
       if (c.rf && hasTmp && c.fe === 'F') counts.rf++;
       if (c.tk) counts.tk++;
       if (c.oog) counts.oog++;
       if (c.fe === 'F') counts.full++;
       else counts.empty++;
+      
       const lbl = isoToLabel(c.iso);
       if (lbl === '40HC') counts.hc++;
       else if (lbl === '20DC') counts.dc20++;
       else if (lbl === '40DC') counts.dc40++;
+      else if (lbl === '20RF') counts.rf20++;
+      else if (lbl === '40RF') counts.rf40++;
+      else if (lbl === '20FR') counts.fr20++;
+      else if (lbl === '40FR') counts.fr40++;
+      else if (lbl === '20OT') counts.ot20++;
+      else if (lbl === '40OT') counts.ot40++;
+      else if (lbl === '20TK') counts.tk20++;
+      else if (lbl === '40TK') counts.tk40++;
     }
     return counts;
   }, [list]);
@@ -498,6 +510,15 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     if (cargoFilter === 'empty' && c.fe !== 'E') return false;
     if (cargoFilter === 'hc' && isoToLabel(c.iso) !== '40HC') return false;
     if (cargoFilter === '20' && !['20DC', '20GP'].includes(isoToLabel(c.iso))) return false;
+    // V36: 특수화물 필터
+    if (cargoFilter === 'rf20' && isoToLabel(c.iso) !== '20RF') return false;
+    if (cargoFilter === 'rf40' && isoToLabel(c.iso) !== '40RF') return false;
+    if (cargoFilter === 'fr20' && isoToLabel(c.iso) !== '20FR') return false;
+    if (cargoFilter === 'fr40' && isoToLabel(c.iso) !== '40FR') return false;
+    if (cargoFilter === 'ot20' && isoToLabel(c.iso) !== '20OT') return false;
+    if (cargoFilter === 'ot40' && isoToLabel(c.iso) !== '40OT') return false;
+    if (cargoFilter === 'tk20' && isoToLabel(c.iso) !== '20TK') return false;
+    if (cargoFilter === 'tk40' && isoToLabel(c.iso) !== '40TK') return false;
     if (cargoFilter === '40' && !['40DC', '40GP'].includes(isoToLabel(c.iso))) return false;
     
     // 검색
@@ -556,9 +577,15 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
       <button onClick={() => setCargoFilter('20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === '20' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>20DC {cargoCounts.dc20}</button>
       <button onClick={() => setCargoFilter('40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === '40' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>40DC {cargoCounts.dc40}</button>
       <button onClick={() => setCargoFilter('hc')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'hc' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-300'}`}>40HC {cargoCounts.hc}</button>
-      {cargoCounts.rf > 0 && <button onClick={() => setCargoFilter('rf')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'rf' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-cyan-300'}`}>❄ RF {cargoCounts.rf}</button>}
+      {cargoCounts.rf20 > 0 && <button onClick={() => setCargoFilter('rf20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'rf20' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-cyan-300'}`}>❄ 20RF {cargoCounts.rf20}</button>}
+      {cargoCounts.rf40 > 0 && <button onClick={() => setCargoFilter('rf40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'rf40' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-cyan-300'}`}>❄ 40RF {cargoCounts.rf40}</button>}
+      {cargoCounts.fr20 > 0 && <button onClick={() => setCargoFilter('fr20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'fr20' ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-yellow-300'}`}>▱ 20FR {cargoCounts.fr20}</button>}
+      {cargoCounts.fr40 > 0 && <button onClick={() => setCargoFilter('fr40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'fr40' ? 'bg-yellow-600 text-white' : 'bg-slate-800 text-yellow-300'}`}>▱ 40FR {cargoCounts.fr40}</button>}
+      {cargoCounts.ot20 > 0 && <button onClick={() => setCargoFilter('ot20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'ot20' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-pink-300'}`}>△ 20OT {cargoCounts.ot20}</button>}
+      {cargoCounts.ot40 > 0 && <button onClick={() => setCargoFilter('ot40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'ot40' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-pink-300'}`}>△ 40OT {cargoCounts.ot40}</button>}
+      {cargoCounts.tk20 > 0 && <button onClick={() => setCargoFilter('tk20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk20' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ 20TK {cargoCounts.tk20}</button>}
+      {cargoCounts.tk40 > 0 && <button onClick={() => setCargoFilter('tk40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk40' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ 40TK {cargoCounts.tk40}</button>}
       {cargoCounts.dg > 0 && <button onClick={() => setCargoFilter('dg')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'dg' ? 'bg-red-600 text-white' : 'bg-slate-800 text-red-300'}`}>🔥 DG {cargoCounts.dg}</button>}
-      {cargoCounts.tk > 0 && <button onClick={() => setCargoFilter('tk')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ TK {cargoCounts.tk}</button>}
       {cargoCounts.oog > 0 && <button onClick={() => setCargoFilter('oog')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'oog' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-purple-300'}`}>📐 OOG {cargoCounts.oog}</button>}
 
     </div>
@@ -1133,7 +1160,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   const xMarks = useMemo(() => {
     const marks = new Set(); // "row-tier" 형식 키
     
-    // V34: 모든 컨테이너의 점유 자리 먼저 수집 (X 안 그리기 위해)
+    // V36: 모든 컨테이너의 점유 자리 먼저 수집 (X 안 그리기 위해)
     const occupied = new Set();
     for (const c of allContainers) {
       if (c.row && c.tier) occupied.add(`${c.row}-${c.tier}`);
