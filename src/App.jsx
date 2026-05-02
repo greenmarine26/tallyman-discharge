@@ -465,12 +465,13 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
   // 화물 종류별 카운트
   const cargoCounts = useMemo(() => {
     const counts = { 
-      dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, 
+      dg: 0, rf: 0, tk: 0, oog: 0, full: 0, empty: 0, xray: 0,
       hc: 0, dc20: 0, dc40: 0,
       rf20: 0, rf40: 0, fr20: 0, fr40: 0, ot20: 0, ot40: 0, tk20: 0, tk40: 0
     };
     for (const c of list) {
       if (c.dg) counts.dg++;
+      if (xrayList && xrayList[c.cn]) counts.xray++;
       const hasTmp = c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0';
       if (c.rf && hasTmp && c.fe === 'F') counts.rf++;
       if (c.tk) counts.tk++;
@@ -492,7 +493,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
       else if (lbl === '40TK') counts.tk40++;
     }
     return counts;
-  }, [list]);
+  }, [list, xrayList]);
   
   const filtered = list.filter(c => {
     // 완료 상태 필터
@@ -502,6 +503,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     if (filter === 'damaged' && !info?.damaged) return false;
     
     // 화물 종류 필터
+    if (cargoFilter === 'xray' && !(xrayList && xrayList[c.cn])) return false;
     if (cargoFilter === 'dg' && !c.dg) return false;
     if (cargoFilter === 'rf' && !(c.rf && c.tmp && String(c.tmp).trim() !== '' && String(c.tmp).trim() !== '0' && c.fe === 'F')) return false;
     if (cargoFilter === 'tk' && !c.tk) return false;
@@ -510,7 +512,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
     if (cargoFilter === 'empty' && c.fe !== 'E') return false;
     if (cargoFilter === 'hc' && isoToLabel(c.iso) !== '40HC') return false;
     if (cargoFilter === '20' && !['20DC', '20GP'].includes(isoToLabel(c.iso))) return false;
-    // V36: 특수화물 필터
+    // V37: 특수화물 필터
     if (cargoFilter === 'rf20' && isoToLabel(c.iso) !== '20RF') return false;
     if (cargoFilter === 'rf40' && isoToLabel(c.iso) !== '40RF') return false;
     if (cargoFilter === 'fr20' && isoToLabel(c.iso) !== '20FR') return false;
@@ -585,6 +587,7 @@ function DischargeListTab({ list, setSelectedCn, xrayList, completedMap, toggleX
       {cargoCounts.ot40 > 0 && <button onClick={() => setCargoFilter('ot40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'ot40' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-pink-300'}`}>△ 40OT {cargoCounts.ot40}</button>}
       {cargoCounts.tk20 > 0 && <button onClick={() => setCargoFilter('tk20')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk20' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ 20TK {cargoCounts.tk20}</button>}
       {cargoCounts.tk40 > 0 && <button onClick={() => setCargoFilter('tk40')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'tk40' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-orange-300'}`}>⬛ 40TK {cargoCounts.tk40}</button>}
+      {cargoCounts.xray > 0 && <button onClick={() => setCargoFilter('xray')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'xray' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-purple-300'}`}>🔍 X-RAY {cargoCounts.xray}</button>}
       {cargoCounts.dg > 0 && <button onClick={() => setCargoFilter('dg')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'dg' ? 'bg-red-600 text-white' : 'bg-slate-800 text-red-300'}`}>🔥 DG {cargoCounts.dg}</button>}
       {cargoCounts.oog > 0 && <button onClick={() => setCargoFilter('oog')} className={`px-2 py-1 rounded text-[10px] font-bold ${cargoFilter === 'oog' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-purple-300'}`}>📐 OOG {cargoCounts.oog}</button>}
 
@@ -1160,7 +1163,7 @@ function BaySection({ page, bayGroups, completedMap, xrayList, dischargeCns, shi
   const xMarks = useMemo(() => {
     const marks = new Set(); // "row-tier" 형식 키
     
-    // V36: 모든 컨테이너의 점유 자리 먼저 수집 (X 안 그리기 위해)
+    // V37: 모든 컨테이너의 점유 자리 먼저 수집 (X 안 그리기 위해)
     const occupied = new Set();
     for (const c of allContainers) {
       if (c.row && c.tier) occupied.add(`${c.row}-${c.tier}`);
