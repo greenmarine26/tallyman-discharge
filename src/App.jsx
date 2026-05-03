@@ -1837,6 +1837,13 @@ function VoyageStatsBox({ voyage }) {
     const ptkInEdi = containers.filter(isPtk);
     const ptkMissingInList = ptkInEdi.filter(c => !listCns.has(c.cn));
     
+    // V38: 누락분 선사(검수업체)별 분포
+    const ptkMissingByOp = {};
+    ptkMissingInList.forEach(c => {
+      const op = c.op || '미지정';
+      ptkMissingByOp[op] = (ptkMissingByOp[op] || 0) + 1;
+    });
+    
     return {
       total: records.length,
       ediTotal: containers.length,
@@ -1846,6 +1853,7 @@ function VoyageStatsBox({ voyage }) {
       missingByCarrier,
       ptkMissingInList: ptkMissingInList.length,
       ptkMissingDetails: ptkMissingInList.slice(0, 10),
+      ptkMissingByOp,
     };
   }, [containers, records]);
   
@@ -1952,6 +1960,17 @@ function VoyageStatsBox({ voyage }) {
             {listValidation.ptkMissingInList > 0 && (
               <div className="mt-2 pt-2 border-t border-red-800">
                 <div className="text-red-300 font-bold">🚢 EDI/ASC 에 평택 대상 있는데 리스트에 없음: {listValidation.ptkMissingInList}대</div>
+                {/* V38: 선사(검수업체)별 누락 분포 */}
+                <div className="mt-1.5 ml-1 bg-amber-950/40 border border-amber-800/50 rounded px-2 py-1.5">
+                  <div className="text-[10px] text-amber-300/80 mb-1">▼ 선사별 누락 (해당 검수업체 리스트 추가 필요)</div>
+                  {Object.entries(listValidation.ptkMissingByOp).sort((a,b) => b[1] - a[1]).map(([op, n]) => (
+                    <div key={op} className="text-amber-200 text-[11px] font-bold flex items-center gap-1.5">
+                      <span className="bg-amber-700/60 text-amber-100 px-1.5 py-0.5 rounded text-[10px] mono">{op}</span>
+                      <span>: {n}대</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1.5 text-[10px] text-orange-300/70 ml-1">샘플 컨번호:</div>
                 {listValidation.ptkMissingDetails.map((c, i) => (
                   <div key={i} className="text-orange-200 ml-2 text-[10px]">• {c.cn} ({c.op || '?'}) {c.bay ? `${c.bay}-${c.row}-${c.tier}` : ''}</div>
                 ))}
@@ -2182,7 +2201,12 @@ function VoyageTab({ voyages, activeKey, setActiveKey, addVoyage, deleteVoyage, 
         const buf = await file.arrayBuffer();
         const { records } = await parseListExcel(buf);
         if (records.length === 0) {
-          results.push(`❌ ${file.name}: 데이터 없음`);
+          // V38: CBF/Booking 양식은 개별 컨번호 없는 게 정상 → 정중한 안내
+          if (/cbf|booking|bkg|confirm|예약|booking\s*form/i.test(file.name)) {
+            results.push(`ℹ️ ${file.name}: 예약 양식(Booking Form) — 개별 컨번호 없음, 정상`);
+          } else {
+            results.push(`❌ ${file.name}: 컨번호 인식 실패 (양식 확인 필요)`);
+          }
           continue;
         }
         // 메모리에 누적 (state 의존 X)
