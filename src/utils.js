@@ -1,4 +1,6 @@
 // 공통 유틸리티 — V38 (2026.05.03)
+export const APP_VERSION = 'V38';
+
 // 변경점:
 //   - parseBAPLIE: NAD+CA+ 처리 추가 (V37은 NAD+CF만), LOC+76(환적) 처리,
 //                  TDT 캐리어 추출, ISO 4500/4200/2500/2200 등 4자리 숫자 코드 매핑,
