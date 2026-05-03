@@ -10,7 +10,8 @@ import {
 } from 'lucide-react';
 import { 
   fmtPos, formatWt, isoToLabel, isoToPdfLabel,
-  parseBAPLIE, parseAscFile, parseListExcel, parseXrayList 
+  parseBAPLIE, parseAscFile, parseListExcel, parseXrayList,
+  APP_VERSION 
 } from './utils.js';
 import {
   fbAddVoyage, fbUpdateVoyage, fbDeleteVoyage,
@@ -333,6 +334,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {online ? <Cloud className="w-3.5 h-3.5 text-emerald-400" title="실시간 연결됨"/> : <CloudOff className="w-3.5 h-3.5 text-red-400" title="오프라인"/>}
+            <span className="bg-emerald-700/40 border border-emerald-600/50 text-emerald-300 text-[10px] font-black px-1.5 py-0.5 rounded" title="앱 버전">{APP_VERSION}</span>
             <button onClick={() => setShowInspectorModal(true)}
               className="bg-amber-900/40 border border-amber-700/40 px-2 py-1 rounded text-xs flex items-center gap-1">
               <span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-slate-900 text-[10px] font-black">{inspector[0] || '?'}</span>
